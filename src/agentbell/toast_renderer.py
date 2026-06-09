@@ -1,13 +1,11 @@
 """Claude-styled toast notification with full interactivity.
 
-Supports three states:
-- Compact: default view with title, description, buttons
-- Expanded: shows detail panel with tool/command/project info
-- Mini Pill: auto-collapses after 10s, click to re-expand
-
-Uses ctypes + GDI for rendering. No PowerShell dependency.
-All colors from Claude/Anthropic theme tokens.
-No hardcoded fake data - fields come from real hook events.
+Button capability rules:
+- Only buttons with real handlers are rendered.
+- "我知道了" always dismisses the toast.
+- "查看详情" only shown when has_detail is True.
+- "打开 Claude Code" NOT shown (no real handler implemented).
+- task_done uses single "我知道了" button, no fake CTA.
 """
 
 import os
@@ -25,6 +23,7 @@ from agentbell.theme import (
     ACCENT_PRESSED,
     AUTO_COLLAPSE_MS,
     EVENT_COLORS,
+    GREEN,
     LIGHT,
     MID_GRAY,
     TEXT_PRIMARY,
@@ -37,7 +36,6 @@ from agentbell.theme import (
 
 logger = setup_logging()
 
-# ── GDI constants ────────────────────────────────────────────────────────────
 NULL_PEN = 8
 TRANSPARENT = 1
 DT_CENTER = 1
@@ -59,22 +57,26 @@ def _esc(s: str) -> str:
 _BG = _hex_to_bgr(TOAST_BG)
 _BG_ELEVATED = _hex_to_bgr(TOAST_BG_ELEVATED)
 _ACCENT = _hex_to_bgr(ACCENT_PRIMARY)
-_ACCENT_HOVER = _hex_to_bgr(ACCENT_HOVER)
 _TEXT_PRIMARY_BGR = _hex_to_bgr(TEXT_PRIMARY)
 _TEXT_SECONDARY_BGR = _hex_to_bgr(TEXT_SECONDARY)
 _MID_GRAY_BGR = _hex_to_bgr(MID_GRAY)
 _LIGHT_BGR = _hex_to_bgr(LIGHT)
+_GREEN_BGR = _hex_to_bgr(GREEN)
 
-# Semi-transparent approximations (solid BGR)
 _GHOST_BG = 0x001A1917
-_GHOST_BORDER = 0x00201F1D
-_ICON_BG = 0x001E2A29  # rgba(217,119,87,0.12)
-_ICON_BORDER = 0x003C4E5E  # rgba(217,119,87,0.24)
+_GREEN_ICON_BG = 0x00171E18     # rgba(120,140,93,0.12)
+_GREEN_ICON_BORDER = 0x00304030  # rgba(120,140,93,0.24)
+_ORANGE_ICON_BG = 0x001E2A29    # rgba(217,119,87,0.12)
 
 
 def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig | None = None) -> str:
     cfg = config or AgentBellConfig()
-    accent = _hex_to_bgr(event.accent_color)
+
+    # Event-type specific colors
+    is_done = event.type == "task_done"
+    is_error = event.type == "error"
+    accent = _GREEN_BGR if is_done else (_hex_to_bgr("#c75050") if is_error else _ACCENT)
+    icon_bg = _GREEN_ICON_BG if is_done else _ORANGE_ICON_BG
 
     title = event.title or {
         "permission_required": "Claude Code 需要授权",
@@ -85,7 +87,7 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
 
     desc = event.message or {
         "permission_required": "需要你确认工具调用以继续执行。",
-        "task_done": "当前任务已完成，等待你的下一步。",
+        "task_done": "任务已完成。请回到 Claude Code 终端查看输出或继续操作。",
         "error": "执行过程中出现错误。",
         "info": "",
     }.get(event.type, "")
@@ -104,18 +106,17 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
         "info": "i",
     }.get(event.type, ">_")
 
-    primary_btn = {
-        "permission_required": "打开 Claude Code",
-        "task_done": "查看结果",
-        "error": "查看错误",
-        "info": "打开 Claude Code",
-    }.get(event.type, "打开 Claude Code")
-
-    # Detail data from real event (empty string if not provided)
+    # Detail data from real event
     tool_name = event.tool_name or ""
     command = event.command or ""
     project_path = event.project_path or ""
     has_detail = bool(tool_name or command or project_path)
+
+    # Button capability: only render buttons with real handlers
+    # "我知道了" always available (dismiss)
+    # "查看详情" only when has_detail
+    # No "打开 Claude Code" (no real handler)
+    # No "查看结果" (no real handler)
 
     auto_collapse_ms = cfg.auto_collapse_ms
 
@@ -138,11 +139,9 @@ class PS(ctypes.Structure):
 class RECT(ctypes.Structure):
     _fields_=[('left',ctypes.c_long),('top',ctypes.c_long),('right',ctypes.c_long),('bottom',ctypes.c_long)]
 
-# ── GDI constants ──
 NULL_PEN = 8
 TRANSPARENT = 1
 DT_CENTER = 1
-DT_RIGHT = 2
 DT_VCENTER = 4
 
 # ── Theme (BGR) ──
@@ -154,45 +153,42 @@ TEXT_SECONDARY = {_TEXT_SECONDARY_BGR}
 MID_GRAY = {_MID_GRAY_BGR}
 LIGHT = {_LIGHT_BGR}
 GHOST_BG = {_GHOST_BG}
-ICON_BG = {_ICON_BG}
-ICON_BORDER_COLOR = {_ICON_BORDER}
+ICON_BG = {icon_bg}
 
-# ── Data (from real hook event, no fake data) ──
+# ── Data (from real hook event) ──
 title = "{_esc(title)}"
 desc = "{_esc(desc)}"
 eyebrow = "{_esc(eyebrow)}"
 icon_symbol = "{icon_symbol}"
-primary_text = "{_esc(primary_btn)}"
 tool_name = "{_esc(tool_name)}"
 cmd_text = "{_esc(command)}"
 proj_path = "{_esc(project_path)}"
 has_detail = {"True" if has_detail else "False"}
+is_done = {"True" if is_done else "False"}
 duration = {auto_collapse_ms // 1000 + 12}
 
-# ── Fallback text when detail is missing ──
 DETAIL_FALLBACK = "工具调用详情暂不可用"
-DETAIL_HINT = "请回到 Claude Code 终端查看完整授权信息。"
 
 # ── State ──
-state = "compact"  # compact | expanded | pill
+state = "compact"
 hwnd_ref = [0]
 
 # ── Layout ──
-COMPACT_W, COMPACT_H = 380, 140
-EXPANDED_W, EXPANDED_H = 400, 240
+COMPACT_W = 380
+COMPACT_H = 130
+EXPANDED_W = 400
+EXPANDED_H = 240
 PILL_W, PILL_H = 160, 36
 PAD = 16
 ICON_SZ = 36
 ICON_TEXT_GAP = 12
 BTN_H = 34
 BTN_RADIUS = 10
-PRIMARY_BTN_W = 124
-GHOST_BTN_W = 72
 BTN_GAP = 8
 
-# ── Button hit rects ──
-btn_primary_rect = [0, 0, 0, 0]
-btn_secondary_rect = [0, 0, 0, 0]
+# Button rects
+btn_action_rect = [0, 0, 0, 0]   # primary action (我知道了 / 收起)
+btn_detail_rect = [0, 0, 0, 0]   # detail toggle (查看详情)
 btn_close_rect = [0, 0, 0, 0]
 btn_pill_rect = [0, 0, 0, 0]
 
@@ -202,12 +198,6 @@ def pt_in_rect(px, py, r):
 def fill_bg(hdc, w, h, color):
     brush = gdi32.CreateSolidBrush(color)
     rc = RECT(0, 0, w, h)
-    user32.FillRect(hdc, ctypes.byref(rc), brush)
-    gdi32.DeleteObject(brush)
-
-def fill_rect_color(hdc, x, y, w, h, color):
-    brush = gdi32.CreateSolidBrush(color)
-    rc = RECT(x, y, x+w, y+h)
     user32.FillRect(hdc, ctypes.byref(rc), brush)
     gdi32.DeleteObject(brush)
 
@@ -252,103 +242,72 @@ def draw_mono_text(hdc, x, y, w, h, text, color, font_size):
 
 # ── Drawing ──
 
-def draw_icon(hdc, x, y, accent_color):
-    # Icon container with accent-tinted background
+def draw_icon(hdc, x, y):
     draw_rounded_rect_filled(hdc, x, y, ICON_SZ, ICON_SZ, 10, ICON_BG)
-    # Icon symbol
-    draw_text_centered(hdc, x, y, ICON_SZ, ICON_SZ, icon_symbol, accent_color, -14, 700)
+    draw_text_centered(hdc, x, y, ICON_SZ, ICON_SZ, icon_symbol, ACCENT, -14, 700)
 
-def draw_eyebrow(hdc, x, y, w, accent_color):
-    # Status dot
-    dot_brush = gdi32.CreateSolidBrush(accent_color)
+def draw_eyebrow(hdc, x, y, w):
+    dot_brush = gdi32.CreateSolidBrush(ACCENT)
     old_b = gdi32.SelectObject(hdc, dot_brush)
     old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
     gdi32.Ellipse(hdc, x, y+2, x+7, y+9)
     gdi32.SelectObject(hdc, old_b)
     gdi32.SelectObject(hdc, old_p)
     gdi32.DeleteObject(dot_brush)
-    # Label
     draw_text_left(hdc, x+11, y, w-11, 14, eyebrow, MID_GRAY, -12, 400)
 
 def draw_close_btn(hdc, x, y):
     draw_text_centered(hdc, x, y, 28, 28, "\\u00d7", MID_GRAY, -16, 400)
     btn_close_rect[:] = [x, y, x+28, y+28]
 
-def draw_primary_btn(hdc, x, y, w):
-    draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, ACCENT)
-    draw_text_centered(hdc, x, y, w, BTN_H, primary_text, LIGHT, -12, 600)
-    btn_primary_rect[:] = [x, y, x+w, y+BTN_H]
-
-def draw_ghost_btn(hdc, x, y, w, text):
+def draw_ghost_btn(hdc, x, y, w, text, rect_store):
     draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, GHOST_BG)
     draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 400)
-    btn_secondary_rect[:] = [x, y, x+w, y+BTN_H]
+    rect_store[:] = [x, y, x+w, y+BTN_H]
 
-def draw_compact(hdc, w, h):
-    # Background
-    fill_bg(hdc, w, h, BG)
-
-    # Icon
+def draw_header_and_body(hdc, w):
     icon_x = PAD
-    icon_y = 20
-    draw_icon(hdc, icon_x, icon_y, ACCENT)
+    icon_y = 18
+    draw_icon(hdc, icon_x, icon_y)
 
-    # Eyebrow
     text_x = PAD + ICON_SZ + ICON_TEXT_GAP
     text_w = w - text_x - PAD - 30
-    draw_eyebrow(hdc, text_x, 20, text_w, ACCENT)
-
-    # Close button
-    draw_close_btn(hdc, w - 28 - 8, 8)
-
-    # Title
-    draw_text_left(hdc, text_x, 38, text_w, 20, title, TEXT_PRIMARY, -15, 650)
-
-    # Description
+    draw_eyebrow(hdc, text_x, 18, text_w)
+    draw_close_btn(hdc, w - 28 - 8, 6)
+    draw_text_left(hdc, text_x, 36, text_w, 20, title, TEXT_PRIMARY, -15, 650)
     if desc:
-        draw_text_left(hdc, text_x, 58, text_w, 20, desc, TEXT_SECONDARY, -13, 400)
+        draw_text_left(hdc, text_x, 56, text_w, 20, desc, TEXT_SECONDARY, -13, 400)
 
-    # Buttons
+def draw_compact(hdc, w, h):
+    fill_bg(hdc, w, h, BG)
+    draw_header_and_body(hdc, w)
+
+    # Buttons: right-aligned at bottom
     btn_y = h - PAD - BTN_H
-    px = w - PAD - PRIMARY_BTN_W
-    draw_primary_btn(hdc, px, btn_y, PRIMARY_BTN_W)
+    action_w = 90  # "我知道了"
+    detail_w = 90  # "查看详情"
 
-    # Ghost button text depends on state and detail availability
-    ghost_text = "查看详情" if has_detail else "忽略"
-    gx = px - BTN_GAP - GHOST_BTN_W
-    draw_ghost_btn(hdc, gx, btn_y, GHOST_BTN_W, ghost_text)
+    if has_detail:
+        # [查看详情] [我知道了]
+        ax = w - PAD - action_w
+        draw_ghost_btn(hdc, ax, btn_y, action_w, "我知道了", btn_action_rect)
+        dx = ax - BTN_GAP - detail_w
+        draw_ghost_btn(hdc, dx, btn_y, detail_w, "查看详情", btn_detail_rect)
+    else:
+        # [我知道了] only, right-aligned
+        ax = w - PAD - action_w
+        draw_ghost_btn(hdc, ax, btn_y, action_w, "我知道了", btn_action_rect)
 
 
 def draw_expanded(hdc, w, h):
-    # Background
     fill_bg(hdc, w, h, BG)
-
-    # Icon
-    icon_x = PAD
-    icon_y = 20
-    draw_icon(hdc, icon_x, icon_y, ACCENT)
-
-    # Eyebrow
-    text_x = PAD + ICON_SZ + ICON_TEXT_GAP
-    text_w = w - text_x - PAD - 30
-    draw_eyebrow(hdc, text_x, 20, text_w, ACCENT)
-
-    # Close button
-    draw_close_btn(hdc, w - 28 - 8, 8)
-
-    # Title
-    draw_text_left(hdc, text_x, 38, text_w, 20, title, TEXT_PRIMARY, -15, 650)
-
-    # Description
-    if desc:
-        draw_text_left(hdc, text_x, 58, text_w, 20, desc, TEXT_SECONDARY, -13, 400)
+    draw_header_and_body(hdc, w)
 
     # Detail panel
-    dy = 82
+    dy = 80
     panel_w = w - PAD * 2
     draw_rounded_rect_filled(hdc, PAD, dy, panel_w, 60, 10, BG_ELEVATED)
 
-    # Detail content - real data or fallback
     detail_x = PAD + 10
     detail_w = panel_w - 20
     draw_text_left(hdc, detail_x, dy+6, detail_w, 16, "将执行以下操作", TEXT_PRIMARY, -12, 600)
@@ -360,17 +319,18 @@ def draw_expanded(hdc, w, h):
     elif proj_path:
         draw_text_left(hdc, detail_x, dy+24, detail_w, 16, proj_path, TEXT_SECONDARY, -12, 400)
     else:
-        # Fallback when no detail data
         draw_text_left(hdc, detail_x, dy+24, detail_w, 16, DETAIL_FALLBACK, MID_GRAY, -12, 400)
 
     # Buttons
     btn_y = h - PAD - BTN_H
-    px = w - PAD - PRIMARY_BTN_W
-    draw_primary_btn(hdc, px, btn_y, PRIMARY_BTN_W)
+    action_w = 90
+    detail_w = 90
 
-    # Expanded: show "收起" instead of "查看详情"
-    gx = px - BTN_GAP - GHOST_BTN_W
-    draw_ghost_btn(hdc, gx, btn_y, GHOST_BTN_W, "收起")
+    # [收起] [我知道了]
+    ax = w - PAD - action_w
+    draw_ghost_btn(hdc, ax, btn_y, action_w, "我知道了", btn_action_rect)
+    dx = ax - BTN_GAP - detail_w
+    draw_ghost_btn(hdc, dx, btn_y, detail_w, "收起", btn_detail_rect)
 
 
 def draw_pill(hdc, w, h):
@@ -402,7 +362,6 @@ def paint(hwnd):
     user32.EndPaint(hwnd, ctypes.byref(ps))
 
 
-# ── State transitions via PostMessage ──
 WM_COLLAPSE = 0x0400 + 100
 WM_EXPAND = 0x0400 + 101
 WM_RESTORE = 0x0400 + 102
@@ -418,10 +377,10 @@ def _resize_window(new_state, w, h):
 
 
 def wp(h, ms, wp, lp):
-    if ms == 0x000F:  # WM_PAINT
+    if ms == 0x000F:
         paint(h)
         return 0
-    elif ms == 0x0014:  # WM_ERASEBKGND
+    elif ms == 0x0014:
         return 1
     elif ms == 0x0201:  # WM_LBUTTONDOWN
         x = lp & 0xFFFF
@@ -432,30 +391,28 @@ def wp(h, ms, wp, lp):
         if pt_in_rect(x, y, btn_close_rect):
             user32.DestroyWindow(h)
             return 0
-        if pt_in_rect(x, y, btn_primary_rect):
+        if pt_in_rect(x, y, btn_action_rect):
+            # "我知道了" -> dismiss
             user32.DestroyWindow(h)
             return 0
-        if pt_in_rect(x, y, btn_secondary_rect):
+        if pt_in_rect(x, y, btn_detail_rect):
             if state == "expanded":
-                # "收起" -> back to compact
+                # "收起" -> compact
                 user32.PostMessageW(h, WM_RESTORE, 0, 0)
             elif state == "compact" and has_detail:
                 # "查看详情" -> expand
                 user32.PostMessageW(h, WM_EXPAND, 0, 0)
-            else:
-                # "忽略" -> dismiss
-                user32.DestroyWindow(h)
             return 0
         return 0
     elif ms == 0x0200:  # WM_MOUSEMOVE
         x = lp & 0xFFFF
         y = (lp >> 16) & 0xFFFF
-        in_btn = pt_in_rect(x, y, btn_primary_rect) or pt_in_rect(x, y, btn_secondary_rect) or pt_in_rect(x, y, btn_close_rect) or pt_in_rect(x, y, btn_pill_rect)
+        in_btn = pt_in_rect(x, y, btn_action_rect) or pt_in_rect(x, y, btn_detail_rect) or pt_in_rect(x, y, btn_close_rect) or pt_in_rect(x, y, btn_pill_rect)
         IDC_ARROW = 32512
         IDC_HAND = 32649
         user32.SetCursor(user32.LoadCursorW(0, IDC_HAND if in_btn else IDC_ARROW))
         return 0
-    elif ms == 0x0020:  # WM_SETCURSOR
+    elif ms == 0x0020:
         user32.SetCursor(user32.LoadCursorW(0, 32512))
         return 1
     elif ms == 0x0113:  # WM_TIMER
@@ -472,12 +429,11 @@ def wp(h, ms, wp, lp):
         _resize_window("compact", COMPACT_W, COMPACT_H)
         user32.SetTimer(h, 1, {auto_collapse_ms}, None)
         return 0
-    elif ms == 0x0002:  # WM_DESTROY
+    elif ms == 0x0002:
         user32.PostQuitMessage(0)
         return 0
     return user32.DefWindowProcW(h, ms, wp, lp)
 
-# Sound
 def _play():
     try: winsound.PlaySound('SystemNotification', winsound.SND_ALIAS)
     except: pass
@@ -516,7 +472,6 @@ while user32.GetMessageW(ctypes.byref(msg), 0, 0, 0):
 '''
 
 
-# ── Toast registry ───────────────────────────────────────────────────────────
 _TOAST_DIR = os.path.join(tempfile.gettempdir(), "agentbell_toasts")
 os.makedirs(_TOAST_DIR, exist_ok=True)
 
@@ -558,8 +513,6 @@ def show_toast(
 ) -> None:
     cfg = config or AgentBellConfig()
     logger.info("Showing toast: type=%r, title=%r", event.type, event.title)
-
-    # Log the event for debugging
     _log_event(event)
 
     _cleanup_old_toasts()
@@ -585,7 +538,7 @@ def show_toast(
 
     script = _generate_toast_script(event, cfg)
 
-    y_offset = active * (140 + 8)
+    y_offset = active * (130 + 8)
     script = script.replace(
         f"sh - COMPACT_H - 60",
         f"sh - COMPACT_H - 60 - {y_offset}"
@@ -628,7 +581,6 @@ def show_toast(
 
 
 def _log_event(event: ClaudeHookToastEvent) -> None:
-    """Log hook event to JSONL file for debugging."""
     import json
     log_dir = os.path.join(os.path.expanduser("~"), ".agentbell", "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -650,35 +602,12 @@ def _log_event(event: ClaudeHookToastEvent) -> None:
         pass
 
 
-def show_permission_toast(
-    title: str | None = None,
-    message: str | None = None,
-    tool_name: str | None = None,
-    command: str | None = None,
-    project_path: str | None = None,
-    config: AgentBellConfig | None = None,
-) -> None:
-    event = ClaudeHookToastEvent(
-        id=uuid.uuid4().hex[:12],
-        type="permission_required",
-        title=title,
-        message=message,
-        tool_name=tool_name,
-        command=command,
-        project_path=project_path,
-    )
+def show_permission_toast(title=None, message=None, tool_name=None, command=None, project_path=None, config=None):
+    event = ClaudeHookToastEvent(id=uuid.uuid4().hex[:12], type="permission_required",
+        title=title, message=message, tool_name=tool_name, command=command, project_path=project_path)
     show_toast(event, config)
 
 
-def show_done_toast(
-    title: str | None = None,
-    message: str | None = None,
-    config: AgentBellConfig | None = None,
-) -> None:
-    event = ClaudeHookToastEvent(
-        id=uuid.uuid4().hex[:12],
-        type="task_done",
-        title=title,
-        message=message,
-    )
+def show_done_toast(title=None, message=None, config=None):
+    event = ClaudeHookToastEvent(id=uuid.uuid4().hex[:12], type="task_done", title=title, message=message)
     show_toast(event, config)

@@ -82,7 +82,7 @@ def test(style: str) -> None:
             id=uuid.uuid4().hex[:12],
             type="task_done",
             title="Claude Code 任务完成",
-            message="当前任务已完成。",
+            message="任务已完成。请回到 Claude Code 终端查看输出或继续操作。",
         ),
         "error": ClaudeHookToastEvent(
             id=uuid.uuid4().hex[:12],
