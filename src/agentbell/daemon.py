@@ -52,7 +52,7 @@ class SessionRegistry:
 
     def __init__(self):
         self._sessions: dict[str, SessionInfo] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def get_or_create(self, session_id: str) -> SessionInfo:
         with self._lock:
@@ -104,7 +104,7 @@ class EventRouter:
     def __init__(self, registry: SessionRegistry):
         self.registry = registry
         self._recent_events: dict[str, float] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._toast_callback = None  # set by daemon
 
     def set_toast_callback(self, callback):

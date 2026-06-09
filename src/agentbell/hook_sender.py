@@ -1,8 +1,9 @@
-"""Lightweight hook sender - reads JSON from stdin, sends to daemon.
+"""Lightweight hook sender - reads Claude Code hook JSON from stdin, sends to daemon.
 
 Used as Claude Code hook command. Reads hook JSON from stdin,
 sends to local daemon via HTTP, then exits immediately.
 Does not display UI. Does not run long.
+If daemon is not running, tries to start it (max 500ms).
 """
 
 import json
@@ -18,7 +19,7 @@ logger = setup_logging()
 
 def _start_daemon_if_needed() -> bool:
     """Try to start daemon if not running. Wait up to 500ms."""
-    from agentbell.daemon import is_daemon_running, DAEMON_URL
+    from agentbell.daemon import is_daemon_running
     if is_daemon_running():
         return True
 
@@ -29,7 +30,6 @@ def _start_daemon_if_needed() -> bool:
         if not os.path.exists(pythonw):
             pythonw = sys.executable
 
-        # Start daemon in background
         subprocess.Popen(
             [pythonw, "-m", "agentbell", "daemon"],
             stdout=subprocess.DEVNULL,
@@ -49,34 +49,30 @@ def _start_daemon_if_needed() -> bool:
     return False
 
 
-def send_hook_event(event_name: str, payload: dict) -> bool:
-    """Send a hook event to the daemon."""
-    from agentbell.daemon import send_to_daemon
-    return send_to_daemon(event_name, payload)
-
-
 def main():
-    """Entry point for hook sender. Reads JSON from stdin."""
+    """Entry point for hook sender. Reads JSON from stdin, sends to daemon."""
     # Suppress stdout/stderr to not pollute Claude Code
     devnull = open(os.devnull, "w")
     sys.stdout = devnull
     sys.stderr = devnull
 
-    # Read JSON from stdin
+    # Read JSON from stdin (Claude Code passes hook event data on stdin)
     try:
         raw = sys.stdin.read()
         if not raw.strip():
             return
         payload = json.loads(raw)
-    except (json.JSONDecodeError, IOError):
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error("Failed to read stdin JSON: %s", e)
         return
 
-    # Determine event name
+    # Determine event name from payload
     event_name = payload.get("hook_event_name", "")
     if not event_name:
         event_name = payload.get("hook_type", "")
 
     if not event_name:
+        logger.warning("No event name in payload, skipping")
         return
 
     # Ensure daemon is running
@@ -85,7 +81,10 @@ def main():
         return
 
     # Send to daemon
-    send_hook_event(event_name, payload)
+    from agentbell.daemon import send_to_daemon
+    success = send_to_daemon(event_name, payload)
+    if not success:
+        logger.error("Failed to send event to daemon: %s", event_name)
 
 
 if __name__ == "__main__":

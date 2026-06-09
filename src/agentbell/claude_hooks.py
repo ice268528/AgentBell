@@ -1,26 +1,7 @@
 """Install/uninstall Claude Code hooks for AgentBell.
 
-Claude Code hooks format in settings.json:
-{
-  "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "",
-        "hooks": [
-          {"type": "command", "command": "...", "args": [...], "async": true}
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "idle_prompt",
-        "hooks": [
-          {"type": "command", "command": "...", "args": [...], "async": true}
-        ]
-      }
-    ]
-  }
-}
+Hooks use `hook-sender` command which reads JSON from stdin
+and forwards to the daemon. No direct toast creation.
 """
 
 import json
@@ -63,43 +44,15 @@ def _get_agentbell_command() -> tuple[str, list[str]]:
     return ("uv", ["run", "--directory", str(project_dir), "agentbell"])
 
 
-def _make_permission_hook_entry(command: str, base_args: list[str]) -> dict:
-    """Create a PermissionRequest hook entry."""
-    args = base_args + [
-        "notify",
-        "--title", "Claude Code 需要授权",
-        "--message", "需要你确认工具调用以继续执行。",
-        "--kind", "permission",
-        "--source", "claude-code",
-    ]
-    return {
-        "matcher": "",
-        "hooks": [
-            {
-                "type": "command",
-                "command": command,
-                "args": args,
-                "async": True,
-            }
-        ],
-    }
+def _make_hook_entry(command: str, base_args: list[str], matcher: str = "") -> dict:
+    """Create a hook entry that uses hook-sender.
 
-
-def _make_notification_hook_entry(command: str, base_args: list[str]) -> dict:
-    """Create a Notification + idle_prompt hook entry.
-
-    idle_prompt means Claude Code is waiting for user input,
-    NOT that a task is completed.
+    hook-sender reads Claude Code hook JSON from stdin
+    and forwards to the daemon via HTTP.
     """
-    args = base_args + [
-        "notify",
-        "--title", "Claude Code 等待输入",
-        "--message", "本轮响应已结束，请回到终端继续操作。",
-        "--kind", "waiting_input",
-        "--source", "claude-code",
-    ]
+    args = base_args + ["hook-sender"]
     return {
-        "matcher": "idle_prompt",
+        "matcher": matcher,
         "hooks": [
             {
                 "type": "command",
@@ -157,21 +110,17 @@ def install_hooks() -> Path:
     command, base_args = _get_agentbell_command()
     logger.info("Using agentbell command: %s, base_args: %s", command, base_args)
 
-    # Build new hook entries
-    permission_entry = _make_permission_hook_entry(command, base_args)
-    notification_entry = _make_notification_hook_entry(command, base_args)
-
-    # Update PermissionRequest hooks
+    # PermissionRequest hook → daemon handles routing
     perm_entries = hooks.get("PermissionRequest", [])
     perm_entries = _filter_agentbell_entries(perm_entries)
-    perm_entries.append(permission_entry)
+    perm_entries.append(_make_hook_entry(command, base_args))
     hooks["PermissionRequest"] = perm_entries
     logger.info("Updated PermissionRequest hook")
 
-    # Update Notification hooks
+    # Notification + idle_prompt hook → daemon handles routing
     notif_entries = hooks.get("Notification", [])
     notif_entries = _filter_agentbell_entries(notif_entries)
-    notif_entries.append(notification_entry)
+    notif_entries.append(_make_hook_entry(command, base_args, matcher="idle_prompt"))
     hooks["Notification"] = notif_entries
     logger.info("Updated Notification hook")
 
