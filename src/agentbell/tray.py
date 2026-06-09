@@ -1,7 +1,9 @@
 """System tray icon for AgentBell daemon.
 
-Uses ctypes + Windows API to create a tray icon with context menu.
-No external dependencies.
+Uses custom UI components:
+- Custom tray icon (not system default info icon)
+- Custom dark-themed context menu (not system default popup)
+- Custom dark-themed recent events window (not QMessageBox)
 """
 
 import ctypes
@@ -12,15 +14,16 @@ import threading
 import time
 
 from agentbell.logging_utils import setup_logging
+from agentbell.ui.icons import create_default_icon, create_badge_icon, create_muted_icon
+from agentbell.ui.tray_menu import TrayMenu, ID_RECENT, ID_MUTE, ID_QUIT, ID_SETTINGS, ID_ABOUT
+from agentbell.ui.recent_events_window import RecentEventsWindow
 
 logger = setup_logging()
 
 # ── Windows constants ────────────────────────────────────────────────────────
 WM_USER = 0x0400
 WM_TRAYICON = WM_USER + 1
-WM_COMMAND = 0x0111
 WM_DESTROY = 0x0002
-WM_CLOSE = 0x0010
 
 NIM_ADD = 0x00000000
 NIM_MODIFY = 0x00000001
@@ -28,17 +31,6 @@ NIM_DELETE = 0x00000002
 NIF_ICON = 0x00000002
 NIF_MESSAGE = 0x00000001
 NIF_TIP = 0x00000004
-NIF_INFO = 0x00000010
-NIIF_INFO = 0x00000001
-
-MF_STRING = 0x00000000
-MF_GRAYED = 0x00000001
-MF_SEPARATOR = 0x00000800
-TPM_RIGHTBUTTON = 0x00000002
-TPM_BOTTOMALIGN = 0x00000020
-
-GCL_WNDPROC = -24
-GWLP_WNDPROC = -4
 
 user32 = ctypes.windll.user32
 shell32 = ctypes.windll.shell32
@@ -47,7 +39,6 @@ LRESULT = ctypes.c_longlong if sys.maxsize > 2**32 else ctypes.c_long
 LP = ctypes.c_longlong if sys.maxsize > 2**32 else ctypes.c_long
 
 
-# ── NOTIFYICONDATAW ──────────────────────────────────────────────────────────
 class GUID(ctypes.Structure):
     _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
                 ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_uint8 * 8)]
@@ -64,33 +55,32 @@ class NOTIFYICONDATAW(ctypes.Structure):
         ("szTip", ctypes.c_wchar * 64),
         ("dwState", ctypes.c_uint32),
         ("dwStateMask", ctypes.c_uint32),
-        ("szInfo", ctypes.c_wchar * 128),
+        ("szInfo", ctypes.wintypes.WCHAR * 128),
         ("uTimeoutOrVersion", ctypes.c_uint32),
-        ("szInfoTitle", ctypes.c_wchar * 64),
+        ("szInfoTitle", ctypes.wintypes.WCHAR * 64),
         ("dwInfoFlags", ctypes.c_uint32),
         ("guidItem", GUID),
         ("hBalloonIcon", ctypes.wintypes.HICON),
     ]
 
 
-# ── Menu IDs ─────────────────────────────────────────────────────────────────
-ID_RECENT = 1001
-ID_MUTE = 1002
-ID_SETTINGS = 1003
-ID_QUIT = 1004
-
-
 class TrayIcon:
-    """System tray icon with context menu."""
+    """System tray icon with custom UI."""
 
     def __init__(self, daemon):
         self.daemon = daemon
         self._hwnd = None
         self._nid = None
-        self._icon = None
         self._wnd_proc_ref = None
         self._class_name = "AgentBellTrayClass"
-        self._badge_count = 0
+        self._default_icon = None
+        self._badge_icon = None
+        self._muted_icon = None
+        self._is_muted = False
+
+        # Custom UI components
+        self.recent_events = RecentEventsWindow(daemon)
+        self.menu = TrayMenu(daemon, on_action=self._on_menu_action)
 
     def _create_window(self):
         """Create a hidden window for tray icon messages."""
@@ -102,20 +92,11 @@ class TrayIcon:
         def wnd_proc(hwnd, msg, wparam, lparam):
             if msg == WM_TRAYICON:
                 if lparam == 0x0204:  # WM_RBUTTONDOWN
-                    self._show_menu(hwnd)
+                    self.menu.show()
+                elif lparam == 0x0201:  # WM_LBUTTONDOWN
+                    self.recent_events.toggle()
                 elif lparam == 0x0203:  # WM_LBUTTONDBLCLK
-                    self._show_recent_events()
-                return 0
-            elif msg == WM_COMMAND:
-                cmd_id = wparam & 0xFFFF
-                if cmd_id == ID_RECENT:
-                    self._show_recent_events()
-                elif cmd_id == ID_MUTE:
-                    self._toggle_mute()
-                elif cmd_id == ID_SETTINGS:
-                    self._show_settings()
-                elif cmd_id == ID_QUIT:
-                    self._quit()
+                    self.recent_events.toggle()
                 return 0
             elif msg == WM_DESTROY:
                 user32.PostQuitMessage(0)
@@ -142,105 +123,84 @@ class TrayIcon:
         )
 
     def _add_tray_icon(self):
-        """Add tray icon to system tray."""
+        """Add tray icon with custom icon."""
+        # Create custom icons
+        self._default_icon = create_default_icon(16)
+        self._badge_icon = create_badge_icon(16, 1)
+        self._muted_icon = create_muted_icon(16)
+
         self._nid = NOTIFYICONDATAW()
         self._nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
         self._nid.hWnd = self._hwnd
         self._nid.uID = 1
         self._nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP
         self._nid.uCallbackMessage = WM_TRAYICON
-        self._nid.hIcon = user32.LoadIconW(0, 32516)  # IDI_INFORMATION
+        self._nid.hIcon = self._default_icon
         self._nid.szTip = "AgentBell"
         shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._nid))
 
+    def _update_icon(self, icon_handle):
+        """Update tray icon."""
+        if self._nid:
+            self._nid.hIcon = icon_handle
+            self._nid.uFlags = NIF_ICON
+            shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._nid))
+            self._nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP
+
     def _update_tooltip(self, text: str):
-        """Update tray icon tooltip."""
         if self._nid:
             self._nid.szTip = text[:63]
             shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._nid))
 
-    def _show_balloon(self, title: str, msg: str):
-        """Show a balloon notification from tray icon."""
-        if self._nid:
-            self._nid.szInfoTitle = title[:63]
-            self._nid.szInfo = msg[:127]
-            self._nid.dwInfoFlags = NIIF_INFO
-            self._nid.uFlags = NIF_INFO
-            shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._nid))
-            self._nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP
-
-    def _show_menu(self, hwnd):
-        """Show context menu at cursor position."""
-        menu = user32.CreatePopupMenu()
-
-        # Recent events
-        user32.AppendMenuW(menu, MF_STRING, ID_RECENT, "最近事件")
-
-        # Mute
-        mute_text = "取消静音" if self.daemon.is_muted() else "静音 30 分钟"
-        user32.AppendMenuW(menu, MF_STRING, ID_MUTE, mute_text)
-
-        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
-
-        # Quit
-        user32.AppendMenuW(menu, MF_STRING, ID_QUIT, "退出 AgentBell")
-
-        # Show at cursor position
-        point = ctypes.wintypes.POINT()
-        user32.GetCursorPos(ctypes.byref(point))
-        user32.TrackPopupMenu(
-            menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
-            point.x, point.y, 0, hwnd, None,
-        )
-        user32.DestroyMenu(menu)
-
-    def _show_recent_events(self):
-        """Show recent events in a message box."""
-        sessions = self.daemon.registry.get_all()
-        if not sessions:
-            text = "暂无事件记录"
-        else:
-            lines = []
-            for s in sessions[-10:]:  # last 10
-                state_emoji = {
-                    "running": "[运行中]",
-                    "waiting_permission": "[等待授权]",
-                    "waiting_input": "[等待输入]",
-                    "background_running": "[后台运行]",
-                    "task_completed": "[已完成]",
-                    "error": "[错误]",
-                }.get(s.state, "[未知]")
-                lines.append(f"{state_emoji} {s.label} - {s.last_event_type}")
-            text = "\n".join(lines)
-
-        user32.MessageBoxW(0, text, "AgentBell 最近事件", 0x00000040)  # MB_ICONINFORMATION
+    def _on_menu_action(self, item_id: int):
+        """Handle menu item click."""
+        if item_id == ID_RECENT:
+            self.recent_events.show()
+        elif item_id == ID_MUTE:
+            self._toggle_mute()
+        elif item_id == ID_QUIT:
+            self._quit()
 
     def _toggle_mute(self):
-        """Toggle mute state."""
         if self.daemon.is_muted():
             self.daemon._muted_until = 0
+            self._is_muted = False
+            self._update_icon(self._default_icon)
             self._update_tooltip("AgentBell")
         else:
             self.daemon.mute(30)
+            self._is_muted = True
+            self._update_icon(self._muted_icon)
             self._update_tooltip("AgentBell (已静音)")
 
-    def _show_settings(self):
-        """Show settings (placeholder)."""
-        user32.MessageBoxW(0, "设置功能开发中", "AgentBell", 0x00000040)
-
     def _quit(self):
-        """Quit the daemon."""
         if self._nid:
             shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self._nid))
+        if self._default_icon:
+            user32.DestroyIcon(self._default_icon)
+        if self._badge_icon:
+            user32.DestroyIcon(self._badge_icon)
+        if self._muted_icon:
+            user32.DestroyIcon(self._muted_icon)
         user32.DestroyWindow(self._hwnd)
 
     def update_badge(self):
-        """Update tray icon badge based on pending events."""
+        """Update tray icon based on pending events."""
         count = self.daemon.registry.get_pending_permission_count()
-        if count > 0:
-            tip = f"AgentBell ({count} 个等待授权)"
-            self._update_tooltip(tip)
+        if self._is_muted:
+            self._update_icon(self._muted_icon)
+            self._update_tooltip("AgentBell (已静音)")
+        elif count > 0:
+            # Create badge icon with count
+            badge = create_badge_icon(16, count)
+            self._update_icon(badge)
+            self._update_tooltip(f"AgentBell ({count} 个等待授权)")
+            # Clean up old badge icon
+            if self._badge_icon:
+                user32.DestroyIcon(self._badge_icon)
+            self._badge_icon = badge
         else:
+            self._update_icon(self._default_icon)
             self._update_tooltip("AgentBell")
 
     def run(self):
