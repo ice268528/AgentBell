@@ -75,6 +75,7 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
     # Event-type specific colors
     is_done = event.type == "task_done"
     is_error = event.type == "error"
+    is_waiting = event.type == "waiting_input"
     accent = _GREEN_BGR if is_done else (_hex_to_bgr("#c75050") if is_error else _ACCENT)
     icon_bg = _GREEN_ICON_BG if is_done else _ORANGE_ICON_BG
 
@@ -83,6 +84,7 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
         "task_done": "Claude Code 任务完成",
         "error": "Claude Code 执行失败",
         "info": "Claude Code 通知",
+        "waiting_input": "Claude Code 等待输入",
     }.get(event.type, "Claude Code 通知")
 
     desc = event.message or {
@@ -90,6 +92,7 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
         "task_done": "任务已完成。请回到 Claude Code 终端查看输出或继续操作。",
         "error": "执行过程中出现错误。",
         "info": "",
+        "waiting_input": "本轮响应已结束，请回到终端继续操作。",
     }.get(event.type, "")
 
     eyebrow = {
@@ -97,6 +100,7 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
         "task_done": "已完成",
         "error": "错误",
         "info": "通知",
+        "waiting_input": "等待输入",
     }.get(event.type, "通知")
 
     icon_symbol = {
@@ -104,6 +108,7 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
         "task_done": "\\u2713",
         "error": "!",
         "info": "i",
+        "waiting_input": "\\u23CE",  # return symbol
     }.get(event.type, ">_")
 
     # Detail data from real event

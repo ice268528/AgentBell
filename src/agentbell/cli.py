@@ -27,7 +27,7 @@ def main():
 @main.command()
 @click.option("--title", required=True, help="Notification title")
 @click.option("--message", required=True, help="Notification body text")
-@click.option("--kind", default="info", type=click.Choice(["permission", "done", "error", "info", "test", "notification"]), help="Notification kind")
+@click.option("--kind", default="info", type=click.Choice(["permission", "done", "error", "info", "test", "notification", "waiting_input"]), help="Notification kind")
 @click.option("--source", default="agentbell", help="Source identifier")
 @click.option("--tool-name", default=None, help="Tool name for detail view")
 @click.option("--command", "cmd", default=None, help="Command for detail view")
@@ -46,6 +46,7 @@ def notify(title: str, message: str, kind: str, source: str, tool_name: str | No
         "info": "info",
         "test": "info",
         "notification": "info",
+        "waiting_input": "waiting_input",
     }
 
     event = ClaudeHookToastEvent(
@@ -65,7 +66,7 @@ def notify(title: str, message: str, kind: str, source: str, tool_name: str | No
 
 
 @main.command()
-@click.option("--style", default="permission", type=click.Choice(["permission", "done", "error", "info"]), help="Toast style to test")
+@click.option("--style", default="permission", type=click.Choice(["permission", "done", "error", "info", "waiting_input"]), help="Toast style to test")
 def test(style: str) -> None:
     """Send a test toast notification with Claude visual style."""
     from agentbell.toast_renderer import show_toast
@@ -95,6 +96,12 @@ def test(style: str) -> None:
             type="info",
             title="Claude Code 通知",
             message="AgentBell 工作正常！",
+        ),
+        "waiting_input": ClaudeHookToastEvent(
+            id=uuid.uuid4().hex[:12],
+            type="waiting_input",
+            title="Claude Code 等待输入",
+            message="本轮响应已结束，请回到终端继续操作。",
         ),
     }
 

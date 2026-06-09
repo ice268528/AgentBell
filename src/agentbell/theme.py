@@ -75,7 +75,7 @@ class ClaudeHookToastEvent:
     """Unified event object for toast notifications."""
 
     id: str = ""
-    type: Literal["permission_required", "task_done", "error", "info"] = "info"
+    type: Literal["permission_required", "task_done", "error", "info", "waiting_input"] = "info"
     title: str | None = None
     message: str | None = None
     tool_name: str | None = None

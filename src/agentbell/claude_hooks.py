@@ -86,12 +86,16 @@ def _make_permission_hook_entry(command: str, base_args: list[str]) -> dict:
 
 
 def _make_notification_hook_entry(command: str, base_args: list[str]) -> dict:
-    """Create a Notification + idle_prompt hook entry."""
+    """Create a Notification + idle_prompt hook entry.
+
+    idle_prompt means Claude Code is waiting for user input,
+    NOT that a task is completed.
+    """
     args = base_args + [
         "notify",
-        "--title", "Claude Code 任务完成",
-        "--message", "当前任务已完成，等待你的下一步。",
-        "--kind", "done",
+        "--title", "Claude Code 等待输入",
+        "--message", "本轮响应已结束，请回到终端继续操作。",
+        "--kind", "waiting_input",
         "--source", "claude-code",
     ]
     return {
