@@ -319,10 +319,28 @@ class DaemonServer:
         self._muted_until = 0.0
         self._toast_callback = None
         self._tray_callback = None
+        self._setup_default_toast_callback()
 
     def set_toast_callback(self, callback):
         self._toast_callback = callback
         self.router.set_toast_callback(callback)
+
+    def _setup_default_toast_callback(self):
+        """Set up default toast callback that shows toasts."""
+        from agentbell.toast_renderer import show_toast
+        from agentbell.theme import ClaudeHookToastEvent
+        import uuid
+
+        def _default_toast_callback(toast_type, title, message, session_label="", session_id="", **kwargs):
+            event = ClaudeHookToastEvent(
+                id=uuid.uuid4().hex[:12],
+                type=toast_type,
+                title=title,
+                message=message,
+            )
+            show_toast(event, session_label=session_label)
+
+        self.set_toast_callback(_default_toast_callback)
 
     def set_tray_callback(self, callback):
         self._tray_callback = callback

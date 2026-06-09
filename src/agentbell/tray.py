@@ -94,6 +94,9 @@ class TrayIcon:
 
     def _create_window(self):
         """Create a hidden window for tray icon messages."""
+        user32.DefWindowProcW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, LP]
+        user32.DefWindowProcW.restype = LRESULT
+
         WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, LP)
 
         def wnd_proc(hwnd, msg, wparam, lparam):

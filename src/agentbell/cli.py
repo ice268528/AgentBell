@@ -50,13 +50,48 @@ def hook_sender():
 @click.option("--command", "cmd", default=None, help="Command for detail view")
 @click.option("--project-path", default=None, help="Project path for detail view")
 def notify(title: str, message: str, kind: str, source: str, tool_name: str | None, cmd: str | None, project_path: str | None) -> None:
-    """Send a Claude-styled toast notification (used as Claude Code hook)."""
+    """Send a Claude-styled toast notification (used as Claude Code hook).
+
+    Tries to send to daemon first. Falls back to direct toast if daemon unavailable.
+    """
     _suppress_output()
 
+    # Map kind to daemon event name and notification_type
+    event_config = {
+        "permission": ("PermissionRequest", ""),
+        "done": ("TaskCompleted", ""),
+        "error": ("Notification", "error"),
+        "info": ("Notification", "info"),
+        "test": ("Notification", "info"),
+        "notification": ("Notification", "info"),
+        "waiting_input": ("Notification", "idle_prompt"),
+    }
+
+    # Always use direct toast for now (daemon architecture for future aggregation)
+    # Log to daemon if running (non-blocking)
+    try:
+        from agentbell.daemon import send_to_daemon, is_daemon_running
+        if is_daemon_running():
+            event_name, notif_type = event_config.get(kind, ("Notification", "info"))
+            payload = {
+                "hook_event_name": event_name,
+                "notification_type": notif_type,
+                "title": title,
+                "message": message,
+                "tool_name": tool_name or "",
+                "cwd": os.getcwd(),
+            }
+            # Fire and forget - don't wait for daemon
+            import threading
+            threading.Thread(target=send_to_daemon, args=(event_name, payload), daemon=True).start()
+    except Exception:
+        pass
+
+    # Direct toast
     from agentbell.toast_renderer import show_toast
     from agentbell.theme import ClaudeHookToastEvent
 
-    kind_map = {
+    kind_to_type = {
         "permission": "permission_required",
         "done": "task_done",
         "error": "error",
@@ -68,7 +103,7 @@ def notify(title: str, message: str, kind: str, source: str, tool_name: str | No
 
     event = ClaudeHookToastEvent(
         id=uuid.uuid4().hex[:12],
-        type=kind_map.get(kind, "info"),
+        type=kind_to_type.get(kind, "info"),
         title=title,
         message=message,
         tool_name=tool_name,
