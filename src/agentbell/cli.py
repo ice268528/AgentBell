@@ -25,6 +25,23 @@ def main():
 
 
 @main.command()
+def daemon():
+    """Run AgentBell as a background daemon with tray icon."""
+    from agentbell.daemon import DaemonServer
+    from agentbell.tray import run_with_tray
+
+    srv = DaemonServer()
+    run_with_tray(srv)
+
+
+@main.command("hook-sender")
+def hook_sender():
+    """Lightweight hook sender. Reads JSON from stdin, sends to daemon."""
+    from agentbell.hook_sender import main as sender_main
+    sender_main()
+
+
+@main.command()
 @click.option("--title", required=True, help="Notification title")
 @click.option("--message", required=True, help="Notification body text")
 @click.option("--kind", default="info", type=click.Choice(["permission", "done", "error", "info", "test", "notification", "waiting_input"]), help="Notification kind")
@@ -133,14 +150,14 @@ def install_claude_hooks() -> None:
 
 @main.command("uninstall-claude-hooks")
 def uninstall_claude_hooks() -> None:
-    """Remove AgentBell hooks from Claude Code settings."""
+    """Remove Claude Code hooks for AgentBell."""
     from agentbell.claude_hooks import uninstall_hooks
 
     try:
         uninstall_hooks()
         click.echo("AgentBell hooks removed from Claude Code settings.")
     except Exception as e:
-        click.echo(f"Failed to uninstall hooks: {e}", err=True)
+        click.echo(f"Failed to remove hooks: {e}", err=True)
         logger.error("uninstall-claude-hooks failed: %s", e)
         sys.exit(1)
 
