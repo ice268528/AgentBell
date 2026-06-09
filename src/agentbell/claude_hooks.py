@@ -67,8 +67,8 @@ def _make_permission_hook_entry(command: str, base_args: list[str]) -> dict:
     """Create a PermissionRequest hook entry."""
     args = base_args + [
         "notify",
-        "--title", "Claude Code 授权提醒",
-        "--message", "Claude Code 需要你授权工具调用",
+        "--title", "Claude Code 需要授权",
+        "--message", "需要你确认工具调用以继续执行。",
         "--kind", "permission",
         "--source", "claude-code",
     ]
@@ -89,8 +89,8 @@ def _make_notification_hook_entry(command: str, base_args: list[str]) -> dict:
     """Create a Notification + idle_prompt hook entry."""
     args = base_args + [
         "notify",
-        "--title", "Claude Code 完成提醒",
-        "--message", "Claude Code 已完成当前回复，正在等待你的下一步",
+        "--title", "Claude Code 任务完成",
+        "--message", "当前任务已完成，等待你的下一步。",
         "--kind", "done",
         "--source", "claude-code",
     ]

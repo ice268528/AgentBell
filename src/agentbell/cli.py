@@ -2,6 +2,7 @@
 
 import os
 import sys
+import uuid
 
 import click
 
@@ -26,35 +27,84 @@ def main():
 @main.command()
 @click.option("--title", required=True, help="Notification title")
 @click.option("--message", required=True, help="Notification body text")
-@click.option("--kind", default="notification", help="Notification kind: permission, done, test, notification")
+@click.option("--kind", default="info", type=click.Choice(["permission", "done", "error", "info", "test", "notification"]), help="Notification kind")
 @click.option("--source", default="agentbell", help="Source identifier")
-def notify(title: str, message: str, kind: str, source: str) -> None:
-    """Send a Windows Toast notification (used as Claude Code hook)."""
-    # Suppress stdout/stderr so Claude Code doesn't see unexpected output
+@click.option("--tool-name", default=None, help="Tool name for detail view")
+@click.option("--command", "cmd", default=None, help="Command for detail view")
+@click.option("--project-path", default=None, help="Project path for detail view")
+def notify(title: str, message: str, kind: str, source: str, tool_name: str | None, cmd: str | None, project_path: str | None) -> None:
+    """Send a Claude-styled toast notification (used as Claude Code hook)."""
     _suppress_output()
 
-    from agentbell.notify import send_notification
+    from agentbell.toast_renderer import show_toast
+    from agentbell.theme import ClaudeHookToastEvent
+
+    kind_map = {
+        "permission": "permission_required",
+        "done": "task_done",
+        "error": "error",
+        "info": "info",
+        "test": "info",
+        "notification": "info",
+    }
+
+    event = ClaudeHookToastEvent(
+        id=uuid.uuid4().hex[:12],
+        type=kind_map.get(kind, "info"),
+        title=title,
+        message=message,
+        tool_name=tool_name,
+        command=cmd,
+        project_path=project_path,
+    )
 
     try:
-        send_notification(title=title, message=message, kind=kind, source=source)
+        show_toast(event)
     except Exception:
         sys.exit(1)
 
 
 @main.command()
-def test() -> None:
-    """Send a test notification with sound."""
-    from agentbell.notify import send_notification
+@click.option("--style", default="permission", type=click.Choice(["permission", "done", "error", "info"]), help="Toast style to test")
+def test(style: str) -> None:
+    """Send a test toast notification with Claude visual style."""
+    from agentbell.toast_renderer import show_toast
+    from agentbell.theme import ClaudeHookToastEvent
 
-    click.echo("Sending test notification...")
+    events = {
+        "permission": ClaudeHookToastEvent(
+            id=uuid.uuid4().hex[:12],
+            type="permission_required",
+            title="Claude Code 需要授权",
+            message="需要你确认工具调用以继续执行。",
+            tool_name="Bash",
+            command="ls -la /Users/username/project",
+        ),
+        "done": ClaudeHookToastEvent(
+            id=uuid.uuid4().hex[:12],
+            type="task_done",
+            title="Claude Code 任务完成",
+            message="当前任务已完成。",
+        ),
+        "error": ClaudeHookToastEvent(
+            id=uuid.uuid4().hex[:12],
+            type="error",
+            title="Claude Code 执行失败",
+            message="执行过程中出现错误。",
+        ),
+        "info": ClaudeHookToastEvent(
+            id=uuid.uuid4().hex[:12],
+            type="info",
+            title="Claude Code 通知",
+            message="AgentBell 工作正常！",
+        ),
+    }
+
+    event = events.get(style, events["permission"])
+    click.echo(f"Sending {style} toast...")
     try:
-        send_notification(
-            title="AgentBell 测试通知",
-            message="如果你看到这条通知并听到提示音，说明 AgentBell 工作正常！",
-            kind="test",
-            source="agentbell-test",
-        )
-        click.echo("Test notification sent successfully!")
+        show_toast(event)
+        click.echo("Toast sent successfully!")
     except Exception as e:
         click.echo(f"Test failed: {e}", err=True)
         logger.error("test command failed: %s", e)
