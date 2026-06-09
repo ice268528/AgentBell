@@ -77,8 +77,6 @@ def test(style: str) -> None:
             type="permission_required",
             title="Claude Code 需要授权",
             message="需要你确认工具调用以继续执行。",
-            tool_name="Bash",
-            command="ls -la /Users/username/project",
         ),
         "done": ClaudeHookToastEvent(
             id=uuid.uuid4().hex[:12],
