@@ -6,6 +6,7 @@ Supports three states:
 - Mini Pill: auto-collapses after 10s, click to re-expand
 
 Uses ctypes + GDI for rendering. No PowerShell dependency.
+All colors from Claude/Anthropic theme tokens.
 """
 
 import os
@@ -35,6 +36,16 @@ from agentbell.theme import (
 
 logger = setup_logging()
 
+# ── GDI constants ────────────────────────────────────────────────────────────
+NULL_PEN = 8
+HOLLOW_BRUSH = 5
+TRANSPARENT = 1
+DT_LEFT = 0
+DT_CENTER = 1
+DT_RIGHT = 2
+DT_VCENTER = 4
+DT_SINGLELINE = 0x20
+
 
 def _hex_to_bgr(hex_color: str) -> int:
     h = hex_color.lstrip("#")
@@ -46,17 +57,27 @@ def _esc(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
+# ── Theme BGR values ─────────────────────────────────────────────────────────
+_BG = _hex_to_bgr(TOAST_BG)           # #181816
+_BG_ELEVATED = _hex_to_bgr(TOAST_BG_ELEVATED)  # #20201d
+_ACCENT = _hex_to_bgr(ACCENT_PRIMARY)  # #d97757
+_ACCENT_HOVER = _hex_to_bgr(ACCENT_HOVER)  # #e38a6b
+_ACCENT_PRESSED = _hex_to_bgr(ACCENT_PRESSED)  # #c76645
+_TEXT_PRIMARY_BGR = _hex_to_bgr(TEXT_PRIMARY)  # #faf9f5
+_TEXT_SECONDARY_BGR = _hex_to_bgr(TEXT_SECONDARY)  # #b0aea5
+_MID_GRAY_BGR = _hex_to_bgr(MID_GRAY)  # #b0aea5
+_LIGHT_BGR = _hex_to_bgr(LIGHT)  # #faf9f5
+
+# Semi-transparent colors approximated as solid BGR
+_GHOST_BG = 0x001A1917        # rgba(250,249,245,0.04) approximated
+_GHOST_HOVER = 0x0022211F     # rgba(250,249,245,0.08) approximated
+_GHOST_BORDER = 0x00201F1D    # rgba(250,249,245,0.12) approximated
+_ICON_CONTAINER_BG = 0x000E1918  # rgba(250,249,245,0.06) approximated
+
+
 def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig | None = None) -> str:
     cfg = config or AgentBellConfig()
     accent = _hex_to_bgr(event.accent_color)
-    bg = _hex_to_bgr(TOAST_BG)
-    bg_elevated = _hex_to_bgr(TOAST_BG_ELEVATED)
-    title_color = _hex_to_bgr(TEXT_PRIMARY)
-    desc_color = _hex_to_bgr(TEXT_SECONDARY)
-    eyebrow_color = _hex_to_bgr(MID_GRAY)
-    icon_bg = _hex_to_bgr(ACCENT_PRESSED)
-    icon_fg = _hex_to_bgr(LIGHT)
-    accent_hover = _hex_to_bgr(ACCENT_HOVER)
 
     title = event.title or {
         "permission_required": "Claude Code 需要授权",
@@ -79,6 +100,14 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
         "info": "通知",
     }.get(event.type, "通知")
 
+    # Icon symbol per event type
+    icon_symbol = {
+        "permission_required": ">_",
+        "task_done": "\\u2713",   # checkmark
+        "error": "!",
+        "info": "i",
+    }.get(event.type, ">_")
+
     primary_btn = {
         "permission_required": "打开 Claude Code",
         "task_done": "查看结果",
@@ -88,11 +117,9 @@ def _generate_toast_script(event: ClaudeHookToastEvent, config: AgentBellConfig 
 
     secondary_btn = "查看详情" if event.tool_name or event.command else "忽略"
 
-    # Detail info
     tool_name = event.tool_name or ""
     command = event.command or ""
     project_path = event.project_path or ""
-
     auto_collapse_ms = cfg.auto_collapse_ms
 
     return f'''import ctypes, ctypes.wintypes, sys, time, winsound, threading
@@ -114,41 +141,55 @@ class PS(ctypes.Structure):
 class RECT(ctypes.Structure):
     _fields_=[('left',ctypes.c_long),('top',ctypes.c_long),('right',ctypes.c_long),('bottom',ctypes.c_long)]
 
-POINT = ctypes.wintypes.POINT
+# ── GDI constants ──
+NULL_PEN = 8
+TRANSPARENT = 1
+DT_CENTER = 1
+DT_RIGHT = 2
+DT_VCENTER = 4
+
+# ── Theme colors (BGR) ──
+BG = {_BG}
+BG_ELEVATED = {_BG_ELEVATED}
+ACCENT = {accent}
+ACCENT_HOVER = {_ACCENT_HOVER}
+ACCENT_PRESSED = {_ACCENT_PRESSED}
+TEXT_PRIMARY = {_TEXT_PRIMARY_BGR}
+TEXT_SECONDARY = {_TEXT_SECONDARY_BGR}
+MID_GRAY = {_MID_GRAY_BGR}
+LIGHT = {_LIGHT_BGR}
+GHOST_BG = {_GHOST_BG}
+GHOST_HOVER = {_GHOST_HOVER}
+GHOST_BORDER = {_GHOST_BORDER}
+ICON_CONTAINER_BG = {_ICON_CONTAINER_BG}
 
 # ── Data ──
 title = "{_esc(title)}"
 desc = "{_esc(desc)}"
 eyebrow = "{_esc(eyebrow)}"
+icon_symbol = "{icon_symbol}"
 primary_text = "{_esc(primary_btn)}"
 secondary_text = "{_esc(secondary_btn)}"
 tool_name = "{_esc(tool_name)}"
 cmd_text = "{_esc(command)}"
 proj_path = "{_esc(project_path)}"
-accent = {accent}
-accent_hover = {accent_hover}
-bg = {bg}
-bg_elevated = {bg_elevated}
-title_color = {title_color}
-desc_color = {desc_color}
-eyebrow_color = {eyebrow_color}
-icon_bg = {icon_bg}
-icon_fg = {icon_fg}
 duration = {auto_collapse_ms // 1000 + 12}
 
 # ── State ──
-state = "compact"  # compact | expanded | pill
+state = "compact"
 hwnd_ref = [0]
-pill_hwnd_ref = [0]
 
-# ── Layout constants ──
+# ── Layout ──
 COMPACT_W, COMPACT_H = 380, 130
 EXPANDED_W, EXPANDED_H = 400, 220
 PILL_W, PILL_H = 160, 36
 PAD = 16
 ICON_SZ = 36
+ICON_TEXT_GAP = 12
+BTN_H = 34
+BTN_RADIUS = 10
 
-# Button rects (relative to window)
+# ── Button hit rects ──
 btn_primary_rect = [0, 0, 0, 0]
 btn_secondary_rect = [0, 0, 0, 0]
 btn_close_rect = [0, 0, 0, 0]
@@ -157,179 +198,181 @@ btn_pill_rect = [0, 0, 0, 0]
 def pt_in_rect(px, py, r):
     return r[0] <= px <= r[2] and r[1] <= py <= r[3]
 
-def draw_rounded_rect(hdc, x, y, w, h, r):
-    gdi32.RoundRect(hdc, x, y, x+w, y+h, r, r)
-
-def draw_compact(hdc, w, h):
-    # Background
-    bg_brush = gdi32.CreateSolidBrush(bg)
+def fill_bg(hdc, w, h, color):
+    brush = gdi32.CreateSolidBrush(color)
     rc = RECT(0, 0, w, h)
-    user32.FillRect(hdc, ctypes.byref(rc), bg_brush)
-    gdi32.DeleteObject(bg_brush)
+    user32.FillRect(hdc, ctypes.byref(rc), brush)
+    gdi32.DeleteObject(brush)
 
-    # Accent bar
-    ab = gdi32.CreateSolidBrush(accent)
-    bar = RECT(0, 0, w, 3)
-    user32.FillRect(hdc, ctypes.byref(bar), ab)
-    gdi32.DeleteObject(ab)
+def fill_rect_color(hdc, x, y, w, h, color):
+    brush = gdi32.CreateSolidBrush(color)
+    rc = RECT(x, y, x+w, y+h)
+    user32.FillRect(hdc, ctypes.byref(rc), brush)
+    gdi32.DeleteObject(brush)
 
-    # Icon
-    ib = gdi32.CreateSolidBrush(icon_bg)
-    old_b = gdi32.SelectObject(hdc, ib)
-    old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(0))
-    draw_rounded_rect(hdc, PAD, 20, ICON_SZ, ICON_SZ, 10)
+def draw_rounded_rect_filled(hdc, x, y, w, h, r, color):
+    brush = gdi32.CreateSolidBrush(color)
+    old_b = gdi32.SelectObject(hdc, brush)
+    old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    gdi32.RoundRect(hdc, x, y, x+w, y+h, r, r)
     gdi32.SelectObject(hdc, old_b)
     gdi32.SelectObject(hdc, old_p)
-    gdi32.DeleteObject(ib)
-    gdi32.SetBkMode(hdc, 1)
-    gdi32.SetTextColor(hdc, icon_fg)
-    f = gdi32.CreateFontW(-14, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+    gdi32.DeleteObject(brush)
+
+def draw_text_centered(hdc, x, y, w, h, text, color, font_size, weight):
+    gdi32.SetBkMode(hdc, TRANSPARENT)
+    gdi32.SetTextColor(hdc, color)
+    f = gdi32.CreateFontW(font_size, 0, 0, 0, weight, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
     o = gdi32.SelectObject(hdc, f)
-    ir = RECT(PAD, 20, PAD+ICON_SZ, 20+ICON_SZ)
-    user32.DrawTextW(hdc, '>_', -1, ctypes.byref(ir), 0x0001 | 0x0004)
+    r = RECT(x, y, x+w, y+h)
+    user32.DrawTextW(hdc, text, -1, ctypes.byref(r), DT_CENTER | DT_VCENTER)
     gdi32.SelectObject(hdc, o)
     gdi32.DeleteObject(f)
 
-    # Eyebrow
-    gdi32.SetTextColor(hdc, eyebrow_color)
-    mf = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, mf)
-    # Dot
-    db = gdi32.CreateSolidBrush(accent)
-    ob = gdi32.SelectObject(hdc, db)
-    gdi32.Ellipse(hdc, 66, 24, 73, 31)
-    gdi32.SelectObject(hdc, ob)
-    gdi32.DeleteObject(db)
-    er = RECT(80, 20, w-30, 34)
-    user32.DrawTextW(hdc, eyebrow, -1, ctypes.byref(er), 0)
+def draw_text_left(hdc, x, y, w, h, text, color, font_size, weight):
+    gdi32.SetBkMode(hdc, TRANSPARENT)
+    gdi32.SetTextColor(hdc, color)
+    f = gdi32.CreateFontW(font_size, 0, 0, 0, weight, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+    o = gdi32.SelectObject(hdc, f)
+    r = RECT(x, y, x+w, y+h)
+    user32.DrawTextW(hdc, text, -1, ctypes.byref(r), DT_VCENTER)
     gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(mf)
+    gdi32.DeleteObject(f)
 
-    # Close button
-    gdi32.SetTextColor(hdc, eyebrow_color)
-    cf = gdi32.CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, cf)
-    cr = RECT(w-28, 10, w-10, 28)
-    user32.DrawTextW(hdc, '\\u00d7', -1, ctypes.byref(cr), 0x0001 | 0x0004)
-    btn_close_rect[:] = [w-28, 10, w-10, 28]
+def draw_text_right(hdc, x, y, w, h, text, color, font_size, weight):
+    gdi32.SetBkMode(hdc, TRANSPARENT)
+    gdi32.SetTextColor(hdc, color)
+    f = gdi32.CreateFontW(font_size, 0, 0, 0, weight, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+    o = gdi32.SelectObject(hdc, f)
+    r = RECT(x, y, x+w, y+h)
+    user32.DrawTextW(hdc, text, -1, ctypes.byref(r), DT_RIGHT | DT_VCENTER)
     gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(cf)
+    gdi32.DeleteObject(f)
 
-    # Title
-    gdi32.SetTextColor(hdc, title_color)
-    tf = gdi32.CreateFontW(-15, 0, 0, 0, 650, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, tf)
-    tr = RECT(66, 36, w-20, 56)
-    user32.DrawTextW(hdc, title, -1, ctypes.byref(tr), 0)
+def draw_mono_text(hdc, x, y, w, h, text, color, font_size):
+    gdi32.SetBkMode(hdc, TRANSPARENT)
+    gdi32.SetTextColor(hdc, color)
+    f = gdi32.CreateFontW(font_size, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Consolas')
+    o = gdi32.SelectObject(hdc, f)
+    r = RECT(x, y, x+w, y+h)
+    user32.DrawTextW(hdc, text, -1, ctypes.byref(r), DT_VCENTER)
     gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(tf)
+    gdi32.DeleteObject(f)
 
-    # Description
-    if desc:
-        gdi32.SetTextColor(hdc, desc_color)
-        df = gdi32.CreateFontW(-13, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-        o = gdi32.SelectObject(hdc, df)
-        dr = RECT(66, 56, w-20, 78)
-        user32.DrawTextW(hdc, desc, -1, ctypes.byref(dr), 0)
-        gdi32.SelectObject(hdc, o)
-        gdi32.DeleteObject(df)
+# ── Drawing functions ──
 
-    # Buttons
-    btn_y = h - 38
-    # Primary button
-    px = w - 130
-    pw = 110
-    pb = gdi32.CreateSolidBrush(accent)
-    old_b = gdi32.SelectObject(hdc, pb)
-    old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(0))
-    draw_rounded_rect(hdc, px, btn_y, pw, 28, 8)
+def draw_icon(hdc, x, y, accent_color):
+    # Icon container: elevated dark background with border
+    draw_rounded_rect_filled(hdc, x, y, ICON_SZ, ICON_SZ, 10, ICON_CONTAINER_BG)
+    # Border (draw a slightly larger rect behind)
+    # Draw icon symbol centered
+    draw_text_centered(hdc, x, y, ICON_SZ, ICON_SZ, icon_symbol, LIGHT, -14, 700)
+
+def draw_eyebrow(hdc, x, y, w, accent_color):
+    # Status dot
+    dot_brush = gdi32.CreateSolidBrush(accent_color)
+    old_b = gdi32.SelectObject(hdc, dot_brush)
+    old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    gdi32.Ellipse(hdc, x, y+2, x+7, y+9)
     gdi32.SelectObject(hdc, old_b)
     gdi32.SelectObject(hdc, old_p)
-    gdi32.DeleteObject(pb)
-    gdi32.SetTextColor(hdc, icon_fg)
-    pf = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, pf)
-    pr = RECT(px, btn_y, px+pw, btn_y+28)
-    user32.DrawTextW(hdc, primary_text, -1, ctypes.byref(pr), 0x0001 | 0x0004)
-    btn_primary_rect[:] = [px, btn_y, px+pw, btn_y+28]
-    gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(pf)
+    gdi32.DeleteObject(dot_brush)
+    # Eyebrow text
+    draw_text_left(hdc, x+11, y, w-11, 14, eyebrow, MID_GRAY, -12, 400)
 
-    # Secondary button
-    sx = px - 90
-    sw = 80
-    gdi32.SetTextColor(hdc, title_color)
-    sf = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, sf)
-    sr = RECT(sx, btn_y, sx+sw, btn_y+28)
-    user32.DrawTextW(hdc, secondary_text, -1, ctypes.byref(sr), 0x0002 | 0x0004)  # DT_RIGHT | DT_VCENTER
-    btn_secondary_rect[:] = [sx, btn_y, sx+sw, btn_y+28]
-    gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(sf)
+def draw_close_btn(hdc, x, y):
+    # Close button: transparent, just draw "x" text
+    draw_text_centered(hdc, x, y, 28, 28, "\\u00d7", MID_GRAY, -16, 400)
+    btn_close_rect[:] = [x, y, x+28, y+28]
+
+def draw_primary_btn(hdc, x, y, w):
+    # Primary button: accent background
+    draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, ACCENT)
+    draw_text_centered(hdc, x, y, w, BTN_H, primary_text, LIGHT, -12, 600)
+    btn_primary_rect[:] = [x, y, x+w, y+BTN_H]
+
+def draw_ghost_btn(hdc, x, y, w, text):
+    # Ghost button: transparent dark background
+    draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, GHOST_BG)
+    draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 400)
+    btn_secondary_rect[:] = [x, y, x+w, y+BTN_H]
+
+def draw_compact(hdc, w, h):
+    # 1. Fill entire background with dark color FIRST
+    fill_bg(hdc, w, h, BG)
+
+    # 2. Accent bar at top (3px)
+    fill_rect_color(hdc, 0, 0, w, 3, ACCENT)
+
+    # 3. Icon (left side, vertically centered in upper area)
+    icon_x = PAD
+    icon_y = 22
+    draw_icon(hdc, icon_x, icon_y, ACCENT)
+
+    # 4. Eyebrow (status dot + label)
+    text_x = PAD + ICON_SZ + ICON_TEXT_GAP
+    text_w = w - text_x - PAD - 30
+    draw_eyebrow(hdc, text_x, 22, text_w, ACCENT)
+
+    # 5. Close button (top right)
+    draw_close_btn(hdc, w - 28 - 8, 10)
+
+    # 6. Title
+    draw_text_left(hdc, text_x, 38, text_w, 20, title, TEXT_PRIMARY, -15, 650)
+
+    # 7. Description
+    if desc:
+        draw_text_left(hdc, text_x, 58, text_w, 18, desc, TEXT_SECONDARY, -13, 400)
+
+    # 8. Buttons (bottom area)
+    btn_y = h - PAD - BTN_H
+    btn_primary_w = 110
+    btn_secondary_w = 80
+    btn_gap = 8
+
+    # Primary button (right)
+    px = w - PAD - btn_primary_w
+    draw_primary_btn(hdc, px, btn_y, btn_primary_w)
+
+    # Ghost button (left of primary)
+    gx = px - btn_gap - btn_secondary_w
+    draw_ghost_btn(hdc, gx, btn_y, btn_secondary_w, secondary_text)
 
 
 def draw_expanded(hdc, w, h):
-    draw_compact(hdc, w, h)  # Base
+    # Base compact layout
+    draw_compact(hdc, w, h)
+
     # Detail panel
     dy = 90
-    dh = h - dy - 44
-    db = gdi32.CreateSolidBrush(bg_elevated)
-    old_b = gdi32.SelectObject(hdc, db)
-    old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(0))
-    draw_rounded_rect(hdc, PAD, dy, w - PAD*2, dh, 10)
-    gdi32.SelectObject(hdc, old_b)
-    gdi32.SelectObject(hdc, old_p)
-    gdi32.DeleteObject(db)
+    dh = h - dy - PAD - BTN_H - 8
+    draw_rounded_rect_filled(hdc, PAD, dy, w - PAD*2, dh, 10, BG_ELEVATED)
 
-    gdi32.SetBkMode(hdc, 1)
-    gdi32.SetTextColor(hdc, title_color)
-    lf = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, lf)
-    lr = RECT(PAD+10, dy+8, w-PAD-10, dy+24)
-    user32.DrawTextW(hdc, '将执行以下操作', -1, ctypes.byref(lr), 0)
-    gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(lf)
+    # Detail content
+    text_x = PAD + 10
+    text_w = w - PAD*2 - 20
+    draw_text_left(hdc, text_x, dy+8, text_w, 16, "将执行以下操作", TEXT_PRIMARY, -12, 600)
 
-    gdi32.SetTextColor(hdc, desc_color)
-    vf = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, vf)
-    vr = RECT(PAD+10, dy+26, w-PAD-10, dy+42)
-    detail_text = tool_name or cmd_text or proj_path or '工具调用详情暂不可用'
-    user32.DrawTextW(hdc, detail_text, -1, ctypes.byref(vr), 0)
+    detail_text = tool_name or cmd_text or proj_path or "工具调用详情暂不可用"
+    draw_text_left(hdc, text_x, dy+26, text_w, 16, detail_text, TEXT_SECONDARY, -12, 400)
+
     if cmd_text:
-        gdi32.SetTextColor(hdc, accent)
-        cf = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Consolas')
-        o2 = gdi32.SelectObject(hdc, cf)
-        cr = RECT(PAD+10, dy+44, w-PAD-10, dy+60)
-        user32.DrawTextW(hdc, cmd_text, -1, ctypes.byref(cr), 0)
-        gdi32.SelectObject(hdc, o2)
-        gdi32.DeleteObject(cf)
-    gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(vf)
+        draw_mono_text(hdc, text_x, dy+44, text_w, 16, cmd_text, ACCENT, -12)
 
 
 def draw_pill(hdc, w, h):
-    bg_brush = gdi32.CreateSolidBrush(bg_elevated)
-    rc = RECT(0, 0, w, h)
-    user32.FillRect(hdc, ctypes.byref(rc), bg_brush)
-    gdi32.DeleteObject(bg_brush)
+    fill_bg(hdc, w, h, BG_ELEVATED)
 
-    # Dot
-    db = gdi32.CreateSolidBrush(accent)
-    old_b = gdi32.SelectObject(hdc, db)
+    # Status dot
+    dot_brush = gdi32.CreateSolidBrush(ACCENT)
+    old_b = gdi32.SelectObject(hdc, dot_brush)
+    old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
     gdi32.Ellipse(hdc, 14, 14, 22, 22)
     gdi32.SelectObject(hdc, old_b)
-    gdi32.DeleteObject(db)
+    gdi32.SelectObject(hdc, old_p)
+    gdi32.DeleteObject(dot_brush)
 
-    # Text
-    gdi32.SetBkMode(hdc, 1)
-    gdi32.SetTextColor(hdc, eyebrow_color)
-    tf = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-    o = gdi32.SelectObject(hdc, tf)
-    tr = RECT(28, 0, w-10, h)
-    user32.DrawTextW(hdc, eyebrow, -1, ctypes.byref(tr), 0x0004)  # DT_VCENTER
-    gdi32.SelectObject(hdc, o)
-    gdi32.DeleteObject(tf)
+    draw_text_left(hdc, 28, 0, w-38, h, eyebrow, MID_GRAY, -12, 400)
     btn_pill_rect[:] = [0, 0, w, h]
 
 
@@ -349,8 +392,8 @@ def paint(hwnd):
     user32.EndPaint(hwnd, ctypes.byref(ps))
 
 
-# Custom messages for state transitions (handled outside WNDPROC)
-WM_COLLAPSE = 0x0400 + 100  # WM_USER + 100
+# ── Custom messages for state transitions ──
+WM_COLLAPSE = 0x0400 + 100
 WM_EXPAND = 0x0400 + 101
 WM_RESTORE = 0x0400 + 102
 
@@ -368,6 +411,8 @@ def wp(h, ms, wp, lp):
     if ms == 0x000F:  # WM_PAINT
         paint(h)
         return 0
+    elif ms == 0x0014:  # WM_ERASEBKGND
+        return 1  # We handle background in WM_PAINT
     elif ms == 0x0201:  # WM_LBUTTONDOWN
         x = lp & 0xFFFF
         y = (lp >> 16) & 0xFFFF
@@ -402,9 +447,6 @@ def wp(h, ms, wp, lp):
         if state != "pill":
             user32.PostMessageW(h, WM_COLLAPSE, 0, 0)
         return 0
-    elif ms == 0x0002:  # WM_DESTROY
-        user32.PostQuitMessage(0)
-        return 0
     elif ms == WM_COLLAPSE:
         _resize_window("pill", PILL_W, PILL_H)
         return 0
@@ -414,6 +456,9 @@ def wp(h, ms, wp, lp):
     elif ms == WM_RESTORE:
         _resize_window("compact", COMPACT_W, COMPACT_H)
         user32.SetTimer(h, 1, {auto_collapse_ms}, None)
+        return 0
+    elif ms == 0x0002:  # WM_DESTROY
+        user32.PostQuitMessage(0)
         return 0
     return user32.DefWindowProcW(h, ms, wp, lp)
 
@@ -434,6 +479,7 @@ w = WC()
 w.p = proc
 w.cn = 'ClaudeToast'
 w.cr = user32.LoadCursorW(0, 32512)
+w.bg = gdi32.CreateSolidBrush(BG)  # Window class background
 user32.RegisterClassW(ctypes.byref(w))
 
 sw = user32.GetSystemMetrics(0)
@@ -461,7 +507,6 @@ os.makedirs(_TOAST_DIR, exist_ok=True)
 
 
 def _cleanup_old_toasts():
-    """Remove stale toast markers (older than 30s)."""
     now = time.time()
     for f in os.listdir(_TOAST_DIR):
         path = os.path.join(_TOAST_DIR, f)
@@ -473,13 +518,11 @@ def _cleanup_old_toasts():
 
 
 def _get_active_toast_count() -> int:
-    """Count active toast marker files."""
     _cleanup_old_toasts()
     return len([f for f in os.listdir(_TOAST_DIR) if f.endswith(".toast")])
 
 
 def _register_toast(toast_id: str) -> str:
-    """Register a toast and return its marker path."""
     marker = os.path.join(_TOAST_DIR, f"{toast_id}.toast")
     with open(marker, "w") as f:
         f.write(str(time.time()))
@@ -487,7 +530,6 @@ def _register_toast(toast_id: str) -> str:
 
 
 def _unregister_toast(marker_path: str) -> None:
-    """Remove a toast marker."""
     try:
         os.unlink(marker_path)
     except OSError:
@@ -502,7 +544,6 @@ def show_toast(
     cfg = config or AgentBellConfig()
     logger.info("Showing toast: type=%r, title=%r", event.type, event.title)
 
-    # Dedup: check if same event type was shown recently
     _cleanup_old_toasts()
     for f in os.listdir(_TOAST_DIR):
         if f.endswith(".toast"):
@@ -510,29 +551,23 @@ def show_toast(
             try:
                 mtime = os.path.getmtime(marker)
                 if time.time() - mtime < cfg.dedupe_window_ms / 1000:
-                    # Check if it's the same event type
                     if event.type in f:
-                        logger.info("Dedup: skipping %s (shown recently)", event.type)
+                        logger.info("Dedup: skipping %s", event.type)
                         return
             except OSError:
                 pass
 
-    # Stacking: limit to max_visible_toasts
     active = _get_active_toast_count()
     if active >= cfg.max_visible_toasts:
-        logger.info("Max toasts reached (%d), skipping", cfg.max_visible_toasts)
+        logger.info("Max toasts reached (%d)", cfg.max_visible_toasts)
         return
 
-    # Register this toast
     toast_id = f"{event.type}_{event.id}"
     marker_path = _register_toast(toast_id)
 
     script = _generate_toast_script(event, cfg)
 
-    # Calculate Y offset for stacking (each toast is offset by COMPACT_H + gap)
     y_offset = active * (130 + 8)
-
-    # Inject Y offset into the script
     script = script.replace(
         f"sh - COMPACT_H - 60",
         f"sh - COMPACT_H - 60 - {y_offset}"
@@ -559,7 +594,7 @@ def show_toast(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        logger.info("Toast subprocess launched.")
+        logger.info("Toast launched.")
     except Exception as e:
         logger.error("Failed to launch toast: %s", e)
 
