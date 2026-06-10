@@ -1,6 +1,13 @@
-"""Unified Claude/Anthropic theme tokens for all AgentBell UI.
+"""Unified Claude/Anthropic design tokens for all AgentBell UI.
 
 Reference: https://github.com/anthropics/skills/blob/main/skills/brand-guidelines/SKILL.md
+
+Design language:
+- Dark warm background (#181816)
+- Orange accent (#d97757) for interactive elements
+- Card-based layouts with subtle borders
+- Large corner radii (18px windows, 14px cards)
+- Muted secondary text for hierarchy
 """
 
 
@@ -29,6 +36,11 @@ ORANGE_PRESSED = "#c76645"
 GREEN = "#788c5d"
 BLUE = "#6a9bcc"
 RED = "#c45f4f"
+
+# Gradient stops (for header backgrounds)
+GRADIENT_DARK = "#141413"
+GRADIENT_MID = "#181816"
+GRADIENT_LIGHT = "#1E1E1B"
 
 # ── Derived ──────────────────────────────────────────────────────────────────
 TEXT_PRIMARY = LIGHT
@@ -61,6 +73,25 @@ BG_CARD_BGR = 0x00161514
 BG_CARD_HOVER_BGR = 0x001A1918
 BG_HOVER_BGR = 0x00191817
 BG_ACTIVE_BGR = 0x00182A29
+
+# Gradient BGR (approximated)
+GRADIENT_DARK_BGR = hex_to_bgr(GRADIENT_DARK)
+GRADIENT_MID_BGR = hex_to_bgr(GRADIENT_MID)
+GRADIENT_LIGHT_BGR = hex_to_bgr(GRADIENT_LIGHT)
+
+# Orange accent BGR variants
+ORANGE_HOVER_BGR = hex_to_bgr(ORANGE_HOVER)
+ORANGE_PRESSED_BGR = hex_to_bgr(ORANGE_PRESSED)
+
+# Text muted BGR (approximated from rgba(250,249,245,0.58))
+TEXT_MUTED_BGR = 0x008C8B87
+
+# Border BGR (approximated from rgba(250,249,245,0.12))
+BORDER_BGR = 0x001E1D1C
+BORDER_SOFT_BGR = 0x00141312
+
+# Separator BGR
+SEPARATOR_BGR = 0x001A1918
 
 # ── Status colors ────────────────────────────────────────────────────────────
 STATUS_COLORS = {
@@ -104,8 +135,24 @@ FONT_FAMILY = 'Segoe UI, Microsoft YaHei UI, sans-serif'
 FONT_MONO = 'Cascadia Code, Consolas, monospace'
 
 # ── Window dimensions ────────────────────────────────────────────────────────
-RECENT_EVENTS_W = 460
-RECENT_EVENTS_H = 360
-RECENT_EVENTS_MIN_H = 220
-TRAY_MENU_W = 260
-TRAY_MENU_MIN_H = 280
+RECENT_EVENTS_W = 840
+RECENT_EVENTS_H = 520
+RECENT_EVENTS_MIN_H = 280
+TRAY_MENU_W = 380
+TRAY_MENU_MIN_H = 320
+
+# ── Panel dimensions ────────────────────────────────────────────────────────
+HEADER_H_PANEL = 68     # brand header in tray panel
+ITEM_H_PANEL = 68       # menu item height in tray panel
+ITEM_H_MENU = 42        # compact menu item height
+SEPARATOR_H = 8
+PADDING_PANEL = 12
+
+# ── Toast dimensions ────────────────────────────────────────────────────────
+TOAST_W = 440
+TOAST_H_COMPACT = 150
+TOAST_H_EXPANDED = 260
+
+# ── Shadow tokens (simulated via layered drawing) ──────────────────────────
+SHADOW_COLOR = 0x00000000  # pure black for shadow simulation
+SHADOW_BLUR = 24

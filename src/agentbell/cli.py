@@ -168,6 +168,71 @@ def test(style: str) -> None:
         sys.exit(1)
 
 
+@main.command("preview-ui")
+def preview_ui():
+    """Preview all AgentBell UI components (dev only, no real events written)."""
+    import uuid
+    import time
+
+    from agentbell.toast_renderer import show_toast
+    from agentbell.theme import ClaudeHookToastEvent
+
+    click.echo("=== AgentBell UI Preview ===")
+    click.echo("Preview data is dev-only, not written to Event Store.")
+    click.echo("")
+
+    # 1. Permission toast
+    click.echo("[1/5] Permission toast...")
+    show_toast(ClaudeHookToastEvent(
+        id=uuid.uuid4().hex[:12],
+        type="permission_required",
+        title="Claude Code 需要授权",
+        message="需要你确认工具调用以继续执行。",
+    ), session_label="MyProject")
+    time.sleep(1)
+
+    # 2. Waiting input toast
+    click.echo("[2/5] Waiting input toast...")
+    show_toast(ClaudeHookToastEvent(
+        id=uuid.uuid4().hex[:12],
+        type="waiting_input",
+        title="Claude Code 等待输入",
+        message="本轮响应已结束，请回到终端继续操作。",
+    ), session_label="ClaudeBell")
+    time.sleep(1)
+
+    # 3. Task completed toast
+    click.echo("[3/5] Task completed toast...")
+    show_toast(ClaudeHookToastEvent(
+        id=uuid.uuid4().hex[:12],
+        type="task_done",
+        title="Claude Code 任务完成",
+        message="任务已标记完成。请回到终端查看输出或继续操作。",
+    ), session_label="DevProject")
+    time.sleep(1)
+
+    # 4. Error toast
+    click.echo("[4/5] Error toast...")
+    show_toast(ClaudeHookToastEvent(
+        id=uuid.uuid4().hex[:12],
+        type="error",
+        title="Claude Code 执行失败",
+        message="发生错误。请回到 Claude Code 终端查看详细信息。",
+    ), session_label="TestProject")
+    time.sleep(1)
+
+    # 5. Recent events window (with preview events)
+    click.echo("[5/5] Recent events window (preview mode)...")
+    click.echo("")
+    click.echo("To see the Recent Events Window and Tray Menu:")
+    click.echo("  1. Run: uv run agentbell daemon")
+    click.echo("  2. Left-click tray icon to open Recent Events Window")
+    click.echo("  3. Right-click tray icon to open Tray Menu")
+    click.echo("")
+    click.echo("Preview complete! All 4 toast types shown above.")
+    click.echo("Note: Toast auto-dismisses after 8 seconds.")
+
+
 @main.command("install-claude-hooks")
 def install_claude_hooks() -> None:
     """Install Claude Code hooks for AgentBell."""

@@ -187,6 +187,8 @@ class TrayIcon:
     def update_badge(self):
         """Update tray icon based on pending events."""
         count = self.daemon.registry.get_pending_permission_count()
+        if count == 0:
+            count = self.daemon.event_store.get_pending_permission_count()
         if self._is_muted:
             self._update_icon(self._muted_icon)
             self._update_tooltip("AgentBell (已静音)")

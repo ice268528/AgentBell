@@ -82,7 +82,7 @@ def _generate_toast_script(
 ) -> str:
     """Generate the Python script for a toast window."""
 
-    return f'''import ctypes, ctypes.wintypes, sys, time, winsound, threading
+    return f'''import ctypes, ctypes.wintypes, sys, time, winsound, threading, math
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -101,10 +101,18 @@ class PS(ctypes.Structure):
 class RECT(ctypes.Structure):
     _fields_=[('left',ctypes.c_long),('top',ctypes.c_long),('right',ctypes.c_long),('bottom',ctypes.c_long)]
 
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_=[('biSize',ctypes.c_uint32),('biWidth',ctypes.c_long),('biHeight',ctypes.c_long),
+              ('biPlanes',ctypes.c_uint16),('biBitCount',ctypes.c_uint16),
+              ('biCompression',ctypes.c_uint32),('biSizeImage',ctypes.c_uint32),
+              ('biXPelsPerMeter',ctypes.c_long),('biYPelsPerMeter',ctypes.c_long),
+              ('biClrUsed',ctypes.c_uint32),('biClrImportant',ctypes.c_uint32)]
+
 NULL_PEN = 8
 TRANSPARENT = 1
 DT_CENTER = 1
 DT_VCENTER = 4
+SRCCOPY = 0x00CC0020
 
 BG = {_BG}
 BG_ELEVATED = {_BG_ELEVATED}
@@ -132,18 +140,29 @@ DETAIL_FALLBACK = "工具调用详情暂不可用"
 state = "compact"
 hwnd_ref = [0]
 
-COMPACT_W, COMPACT_H = 380, 130
-EXPANDED_W, EXPANDED_H = 400, 240
-PAD = 16
-ICON_SZ = 36
-ICON_TEXT_GAP = 12
-BTN_H = 34
+# Shadow extends window by SHADOW_EXTEND pixels on each side
+SHADOW_EXTEND = 24
+COMPACT_W, COMPACT_H = 860, 180
+EXPANDED_W, EXPANDED_H = 860, 300
+# Total window includes shadow area
+TOTAL_COMPACT_W = COMPACT_W + SHADOW_EXTEND * 2
+TOTAL_COMPACT_H = COMPACT_H + SHADOW_EXTEND * 2
+TOTAL_EXPANDED_W = EXPANDED_W + SHADOW_EXTEND * 2
+TOTAL_EXPANDED_H = EXPANDED_H + SHADOW_EXTEND * 2
+PAD = 20
+ICON_SZ = 48
+ICON_TEXT_GAP = 16
+BTN_H = 36
 BTN_RADIUS = 10
-BTN_GAP = 8
+BTN_GAP = 10
+WINDOW_RADIUS = 18
 
 btn_action_rect = [0, 0, 0, 0]
 btn_detail_rect = [0, 0, 0, 0]
 btn_close_rect = [0, 0, 0, 0]
+
+ORANGE_ACCENT_BGR = 0x005777D9
+ORANGE_ACCENT_BG = 0x00876633
 
 def pt_in_rect(px, py, r):
     return r[0] <= px <= r[2] and r[1] <= py <= r[3]
@@ -162,6 +181,26 @@ def draw_rounded_rect_filled(hdc, x, y, w, h, r, color):
     gdi32.SelectObject(hdc, old_b)
     gdi32.SelectObject(hdc, old_p)
     gdi32.DeleteObject(brush)
+
+def draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h):
+    """Draw multi-layer shadow then rounded background. Shadow is visible outside the rounded rect."""
+    # Shadow: draw from outermost to innermost
+    for i in range(8, 0, -1):
+        off = i * 3
+        # Shadow color: darker near window, lighter far away
+        intensity = int(12 + (8 - i) * 8)  # 12..68
+        sc = (intensity << 16) | (intensity << 8) | intensity
+        brush = gdi32.CreateSolidBrush(sc)
+        old_b = gdi32.SelectObject(hdc, brush)
+        old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+        gdi32.RoundRect(hdc, SHADOW_EXTEND - off, SHADOW_EXTEND - off,
+                        SHADOW_EXTEND + content_w + off, SHADOW_EXTEND + content_h + off,
+                        WINDOW_RADIUS + off, WINDOW_RADIUS + off)
+        gdi32.SelectObject(hdc, old_b)
+        gdi32.SelectObject(hdc, old_p)
+        gdi32.DeleteObject(brush)
+    # Main rounded background
+    draw_rounded_rect_filled(hdc, SHADOW_EXTEND, SHADOW_EXTEND, content_w, content_h, WINDOW_RADIUS, BG)
 
 def draw_text_centered(hdc, x, y, w, h, text, color, font_size, weight):
     gdi32.SetBkMode(hdc, TRANSPARENT)
@@ -193,9 +232,9 @@ def draw_mono_text(hdc, x, y, w, h, text, color, font_size):
     gdi32.SelectObject(hdc, o)
     gdi32.DeleteObject(f)
 
-def draw_icon(hdc, x, y):
-    draw_rounded_rect_filled(hdc, x, y, ICON_SZ, ICON_SZ, 10, ICON_BG)
-    draw_text_centered(hdc, x, y, ICON_SZ, ICON_SZ, icon_symbol, ACCENT, -14, 700)
+def draw_icon(hdc, x, y, size=ICON_SZ):
+    draw_rounded_rect_filled(hdc, x, y, size, size, 10, ICON_BG)
+    draw_text_centered(hdc, x, y, size, size, icon_symbol, ACCENT, -16, 700)
 
 def draw_eyebrow(hdc, x, y, w):
     dot_brush = gdi32.CreateSolidBrush(ACCENT)
@@ -219,62 +258,105 @@ def draw_ghost_btn(hdc, x, y, w, text, rect_store):
     draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 400)
     rect_store[:] = [x, y, x+w, y+BTN_H]
 
-def draw_header_and_body(hdc, w):
-    draw_icon(hdc, PAD, 18)
-    text_x = PAD + ICON_SZ + ICON_TEXT_GAP
-    text_w = w - text_x - PAD - 30
-    draw_eyebrow(hdc, text_x, 18, text_w)
-    draw_close_btn(hdc, w - 28 - 8, 6)
-    draw_text_left(hdc, text_x, 36, text_w, 20, title, TEXT_PRIMARY, -15, 650)
+def draw_orange_btn(hdc, x, y, w, text, rect_store):
+    """Draw Soft Orange primary action button."""
+    draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, ORANGE_ACCENT_BG)
+    draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 600)
+    rect_store[:] = [x, y, x+w, y+BTN_H]
+
+def draw_header_and_body(hdc, content_w):
+    """Wide layout: icon left, text center, buttons right."""
+    S = SHADOW_EXTEND
+    # Icon (large, left side)
+    icon_x = S + PAD
+    icon_y = S + PAD + 4
+    draw_icon(hdc, icon_x, icon_y, ICON_SZ)
+
+    # Text area (center, after icon)
+    text_x = icon_x + ICON_SZ + ICON_TEXT_GAP
+    text_right = S + content_w - PAD - 120  # leave room for buttons
+    text_w = text_right - text_x
+
+    # Eyebrow (status dot + label)
+    draw_eyebrow(hdc, text_x, S + PAD + 6, text_w)
+
+    # Title (bold)
+    draw_text_left(hdc, text_x, S + PAD + 24, text_w, 22, title, TEXT_PRIMARY, -16, 650)
+
+    # Description
     if desc:
-        draw_text_left(hdc, text_x, 56, text_w, 20, desc, TEXT_SECONDARY, -13, 400)
+        draw_text_left(hdc, text_x, S + PAD + 50, text_w, 18, desc, TEXT_SECONDARY, -13, 400)
 
-def draw_compact(hdc, w, h):
-    fill_bg(hdc, w, h, BG)
-    draw_header_and_body(hdc, w)
-    btn_y = h - PAD - BTN_H
-    action_w = 90
+    # Project pill
+    pill_text = session_label or ""
+    if pill_text:
+        pill_w = max(50, len(pill_text) * 8 + 16)
+        pill_x = text_x
+        pill_y = S + PAD + 76
+        pill_h = 22
+        pill_pen = gdi32.CreatePen(1, 1, MID_GRAY)
+        old_pen = gdi32.SelectObject(hdc, pill_pen)
+        old_brush2 = gdi32.SelectObject(hdc, gdi32.GetStockObject(4))
+        gdi32.RoundRect(hdc, pill_x, pill_y, pill_x + pill_w, pill_y + pill_h, 6, 6)
+        gdi32.SelectObject(hdc, old_pen)
+        gdi32.SelectObject(hdc, old_brush2)
+        gdi32.DeleteObject(pill_pen)
+        draw_text_centered(hdc, pill_x, pill_y, pill_w, pill_h, pill_text, MID_GRAY, -10, 400)
+
+    # Close button (top right)
+    draw_close_btn(hdc, S + content_w - 34, S + 8)
+
+    # Buttons (right side, vertically centered)
+    btn_x = S + content_w - PAD - 100
+    btn_center_y = S + content_h // 2 - BTN_H // 2
     if has_detail:
-        ax = w - PAD - action_w
-        draw_ghost_btn(hdc, ax, btn_y, action_w, "我知道了", btn_action_rect)
-        dx = ax - BTN_GAP - 90
-        draw_ghost_btn(hdc, dx, btn_y, 90, "查看详情", btn_detail_rect)
+        draw_orange_btn(hdc, btn_x, btn_center_y - BTN_H - BTN_GAP // 2, 100, "我知道了", btn_action_rect)
+        draw_ghost_btn(hdc, btn_x, btn_center_y + BTN_GAP // 2, 100, "查看详情", btn_detail_rect)
     else:
-        ax = w - PAD - action_w
-        draw_ghost_btn(hdc, ax, btn_y, action_w, "我知道了", btn_action_rect)
+        draw_orange_btn(hdc, btn_x, btn_center_y, 100, "我知道了", btn_action_rect)
 
-def draw_expanded(hdc, w, h):
-    fill_bg(hdc, w, h, BG)
-    draw_header_and_body(hdc, w)
-    dy = 80
-    panel_w = w - PAD * 2
-    draw_rounded_rect_filled(hdc, PAD, dy, panel_w, 60, 10, BG_ELEVATED)
-    detail_x = PAD + 10
-    detail_w = panel_w - 20
-    draw_text_left(hdc, detail_x, dy+6, detail_w, 16, "将执行以下操作", TEXT_PRIMARY, -12, 600)
+def draw_compact(hdc, total_w, total_h):
+    content_w, content_h = COMPACT_W, COMPACT_H
+    draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h)
+    draw_header_and_body(hdc, content_w)
+
+def draw_expanded(hdc, total_w, total_h):
+    content_w, content_h = EXPANDED_W, EXPANDED_H
+    draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h)
+    draw_header_and_body(hdc, content_w)
+    S = SHADOW_EXTEND
+    dy = S + 110
+    panel_w = content_w - PAD * 2
+    draw_rounded_rect_filled(hdc, S + PAD, dy, panel_w, 80, 10, BG_ELEVATED)
+    detail_x = S + PAD + 16
+    detail_w = panel_w - 32
+    draw_text_left(hdc, detail_x, dy+8, detail_w, 18, "将执行以下操作", TEXT_PRIMARY, -13, 600)
     if tool_name:
-        draw_text_left(hdc, detail_x, dy+24, detail_w, 16, tool_name, TEXT_SECONDARY, -12, 400)
+        draw_text_left(hdc, detail_x, dy+30, detail_w, 18, tool_name, TEXT_SECONDARY, -13, 400)
     elif cmd_text:
-        draw_mono_text(hdc, detail_x, dy+24, detail_w, 16, cmd_text, ACCENT, -12)
+        draw_mono_text(hdc, detail_x, dy+30, detail_w, 18, cmd_text, ACCENT, -13)
     elif proj_path:
-        draw_text_left(hdc, detail_x, dy+24, detail_w, 16, proj_path, TEXT_SECONDARY, -12, 400)
+        draw_text_left(hdc, detail_x, dy+30, detail_w, 18, proj_path, TEXT_SECONDARY, -13, 400)
     else:
-        draw_text_left(hdc, detail_x, dy+24, detail_w, 16, DETAIL_FALLBACK, MID_GRAY, -12, 400)
-    btn_y = h - PAD - BTN_H
-    ax = w - PAD - 90
-    draw_ghost_btn(hdc, ax, btn_y, 90, "我知道了", btn_action_rect)
-    dx = ax - BTN_GAP - 90
-    draw_ghost_btn(hdc, dx, btn_y, 90, "收起", btn_detail_rect)
+        draw_text_left(hdc, detail_x, dy+30, detail_w, 18, DETAIL_FALLBACK, MID_GRAY, -13, 400)
+    # Buttons at bottom right
+    btn_x = S + content_w - PAD - 100
+    btn_y = S + content_h - PAD - BTN_H
+    draw_orange_btn(hdc, btn_x, btn_y, 100, "我知道了", btn_action_rect)
+    draw_ghost_btn(hdc, btn_x - BTN_GAP - 100, btn_y, 100, "收起", btn_detail_rect)
 
 def paint(hwnd):
     ps = PS()
     hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
     rc = RECT()
     user32.GetClientRect(hwnd, ctypes.byref(rc))
+    tw, th = rc.right, rc.bottom
+    # Clear entire window to transparent (black)
+    fill_bg(hdc, tw, th, 0x00000000)
     if state == "compact":
-        draw_compact(hdc, rc.right, rc.bottom)
+        draw_compact(hdc, tw, th)
     elif state == "expanded":
-        draw_expanded(hdc, rc.right, rc.bottom)
+        draw_expanded(hdc, tw, th)
     user32.EndPaint(hwnd, ctypes.byref(ps))
 
 WM_EXPAND = 0x0400 + 101
@@ -286,7 +368,10 @@ def _resize_window(new_state, w, h):
     hwnd = hwnd_ref[0]
     sw = user32.GetSystemMetrics(0)
     sh = user32.GetSystemMetrics(1)
-    user32.MoveWindow(hwnd, sw - w - 24, sh - h - 60, w, h, True)
+    # Add shadow extend to total window size
+    tw = w + SHADOW_EXTEND * 2
+    th = h + SHADOW_EXTEND * 2
+    user32.MoveWindow(hwnd, sw - tw - 24, sh - th - 60, tw, th, True)
     user32.InvalidateRect(hwnd, None, True)
 
 def wp(h, ms, wp, lp):
@@ -359,12 +444,21 @@ user32.RegisterClassW(ctypes.byref(w))
 sw = user32.GetSystemMetrics(0)
 sh = user32.GetSystemMetrics(1)
 
-ex = 0x00000008 | 0x00000080 | 0x08000000
+# WS_EX_LAYERED for per-pixel alpha transparency (needed for shadow)
+WS_EX_LAYERED = 0x00080000
+ex = 0x00000008 | 0x00000080 | 0x08000000 | WS_EX_LAYERED
+# Window includes shadow area
+tw = COMPACT_W + SHADOW_EXTEND * 2
+th = COMPACT_H + SHADOW_EXTEND * 2
 h = user32.CreateWindowExW(ex, 'ClaudeToast', 'AgentBell', 0x80000000,
-    sw - COMPACT_W - 24, sh - COMPACT_H - 60, COMPACT_W, COMPACT_H, 0, 0, 0, None)
+    sw - tw - 24, sh - th - 60, tw, th, 0, 0, 0, None)
 hwnd_ref[0] = h
+
+# Set layered window attributes: black = transparent, white = opaque
+user32.SetLayeredWindowAttributes(h, 0x00000000, 0, 0x00000001)  # LWA_COLORKEY
+
 user32.ShowWindow(h, 5)
-user32.SetWindowPos(h, -1, sw - COMPACT_W - 24, sh - COMPACT_H - 60, COMPACT_W, COMPACT_H, 0x0010 | 0x0040)
+user32.SetWindowPos(h, -1, sw - tw - 24, sh - th - 60, tw, th, 0x0010 | 0x0040)
 user32.UpdateWindow(h)
 user32.SetTimer(h, 1, dismiss_ms, None)
 
@@ -499,13 +593,10 @@ def show_toast(
         dismiss_ms=cfg.toast_dismiss_ms if hasattr(cfg, 'toast_dismiss_ms') else TOAST_DISMISS_MS,
     )
 
-    y_offset = active * (130 + 8)
+    y_offset = active * (228 + 8)  # COMPACT_H(180) + SHADOW_EXTEND*2(48) + gap
     script = script.replace(
-        "sh - COMPACT_H - 60",
-        f"sh - COMPACT_H - 60 - {y_offset}"
-    ).replace(
-        "sh - EXPANDED_H - 60",
-        f"sh - EXPANDED_H - 60 - {y_offset}"
+        "sh - th - 60",
+        f"sh - th - 60 - {y_offset}"
     )
 
     script_path = os.path.join(tempfile.gettempdir(), f"agentbell_toast_{uuid.uuid4().hex[:8]}.py")

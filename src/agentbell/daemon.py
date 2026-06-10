@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentbell.logging_utils import setup_logging
+from agentbell.event_store import EventStore, AgentBellEvent
 
 logger = setup_logging()
 
@@ -113,7 +114,7 @@ class EventRouter:
     def _dedup_key(self, session_id: str, event_type: str, extra: str = "") -> str:
         return f"{session_id}:{event_type}:{extra}"
 
-    def _is_duplicate(self, key: str, window_sec: float = 3.0) -> bool:
+    def _is_duplicate(self, key: str, window_sec: float = 5.0) -> bool:
         now = time.time()
         with self._lock:
             last = self._recent_events.get(key, 0)
@@ -316,6 +317,7 @@ class DaemonServer:
         self.registry = SessionRegistry()
         self.router = EventRouter(self.registry)
         self.event_logger = EventLogger()
+        self.event_store = EventStore()
         self._muted_until = 0.0
         self._toast_callback = None
         self._tray_callback = None
@@ -355,6 +357,33 @@ class DaemonServer:
 
         # Log the event
         self.event_logger.log(event_name, payload, result, session_id, session_label)
+
+        # Write to event store
+        toast_type = result.get("toast_type") or ""
+        kind_map = {
+            "permission_required": "permission_required",
+            "permission_aggregate": "permission_required",
+            "waiting_input": "waiting_input",
+            "task_done": "task_completed",
+            "error": "error",
+        }
+        event = AgentBellEvent(
+            id=f"{session_id}:{event_name}:{int(time.time())}",
+            timestamp=time.time(),
+            session_id=session_id,
+            session_label=session_label,
+            cwd=payload.get("cwd", ""),
+            hook_event_name=event_name,
+            notification_type=payload.get("notification_type", ""),
+            kind=kind_map.get(toast_type, "info"),
+            title=payload.get("title", ""),
+            message=payload.get("message", ""),
+            tool_name=payload.get("tool_name", ""),
+            command=payload.get("command", ""),
+            project_path=payload.get("project_path", ""),
+            raw_payload=payload,
+        )
+        self.event_store.add(event)
 
         # Check if muted
         if time.time() < self._muted_until:
