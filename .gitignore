@@ -11,3 +11,6 @@ uv.lock
 PromptFiles/
 ACCEPTANCE_REPORT.md
 TODO.md
+*.whl
+*.tar.gz
+*.spec

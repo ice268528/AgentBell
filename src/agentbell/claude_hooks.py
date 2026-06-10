@@ -23,24 +23,33 @@ def _get_agentbell_command() -> tuple[str, list[str]]:
     """Return (command, base_args) for invoking agentbell.
 
     Priority:
-    1. agentbell on PATH (e.g. via uv tool install)
-    2. .venv/Scripts/agentbell.exe in the project directory (uv sync)
-    3. uv run agentbell as fallback
+    1. Frozen exe: AgentBellCLI.exe next to the running executable
+    2. agentbell on PATH (e.g. via uv tool install)
+    3. .venv/Scripts/agentbell.exe in the project directory (uv sync)
+    4. uv run agentbell as fallback
     """
     import shutil as _shutil
+    import sys
 
-    # 1. Check PATH
+    # 1. Check if running as frozen exe
+    if getattr(sys, 'frozen', False):
+        exe_dir = Path(sys.executable).parent
+        cli_exe = exe_dir / "AgentBellCLI.exe"
+        if cli_exe.exists():
+            return (str(cli_exe), [])
+
+    # 2. Check PATH
     found = _shutil.which("agentbell")
     if found:
         return (found, [])
 
-    # 2. Check .venv in project directory
+    # 3. Check .venv in project directory
     project_dir = Path(__file__).resolve().parent.parent.parent
     venv_exe = project_dir / ".venv" / "Scripts" / "agentbell.exe"
     if venv_exe.exists():
         return (str(venv_exe), [])
 
-    # 3. Fallback: uv run
+    # 4. Fallback: uv run
     return ("uv", ["run", "--directory", str(project_dir), "agentbell"])
 
 
