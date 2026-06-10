@@ -7,3 +7,7 @@ build/
 *.egg
 .agentbell/
 uv.lock
+.claude/
+PromptFiles/
+ACCEPTANCE_REPORT.md
+TODO.md

@@ -15,7 +15,7 @@ import time
 
 from agentbell.logging_utils import setup_logging
 from agentbell.ui.icons import create_default_icon, create_badge_icon, create_muted_icon
-from agentbell.ui.tray_menu import TrayMenu, ID_RECENT, ID_MUTE, ID_QUIT, ID_SETTINGS, ID_ABOUT
+from agentbell.ui.tray_menu import TrayMenu, ID_RECENT, ID_MUTE, ID_QUIT, ID_SETTINGS, ID_ABOUT, ID_RESTART
 from agentbell.ui.recent_events_window import RecentEventsWindow
 from agentbell.ui.settings_window import SettingsWindow, AboutWindow
 
@@ -165,8 +165,31 @@ class TrayIcon:
             self.settings_window.show()
         elif item_id == ID_ABOUT:
             self.about_window.show()
+        elif item_id == ID_RESTART:
+            self._restart()
         elif item_id == ID_QUIT:
             self._quit()
+
+    def _restart(self):
+        """Restart AgentBell daemon."""
+        import subprocess
+        # Start new process detached
+        python_dir = os.path.dirname(sys.executable)
+        pythonw = os.path.join(python_dir, "pythonw.exe")
+        if not os.path.exists(pythonw):
+            pythonw = sys.executable
+        try:
+            subprocess.Popen(
+                [pythonw, "-m", "agentbell", "daemon"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+        except Exception as e:
+            logger.error("Failed to start new instance: %s", e)
+            return
+        # Quit current instance
+        self._quit()
 
     def _toggle_mute(self):
         if self.daemon.is_muted():

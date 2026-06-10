@@ -8,6 +8,7 @@ Replaces system default popup with Claude/Anthropic styled panel:
 
 import ctypes
 import ctypes.wintypes
+import os
 import sys
 import time
 
@@ -35,6 +36,7 @@ ID_MUTE = 1002
 ID_SETTINGS = 1003
 ID_ABOUT = 1004
 ID_QUIT = 1005
+ID_RESTART = 1006
 
 
 class _PS(ctypes.Structure):
@@ -56,10 +58,12 @@ _ITEMS = [
     {"id": ID_SETTINGS, "icon_gear": True, "label": "设置"},
     {"id": ID_ABOUT, "icon_info": True, "label": "关于 AgentBell"},
     None,  # separator
+    {"id": ID_RESTART, "icon_restart": True, "label": "重启", "pid_label": True},
     {"id": ID_QUIT, "icon_power": True, "label": "退出 AgentBell"},
 ]
 
 SEPARATOR_H = 8
+ITEM_GAP = 4  # vertical gap between items
 
 
 def _draw_icon_clipboard(hdc, x, y, size, color):
@@ -159,6 +163,27 @@ def _draw_icon_power(hdc, x, y, size, color):
     # Vertical line
     gdi32.MoveToEx(hdc, cx, cy - r - 2, None)
     gdi32.LineTo(hdc, cx, cy - 1)
+    gdi32.SelectObject(hdc, old_p)
+    gdi32.SelectObject(hdc, old_b)
+    gdi32.DeleteObject(pen)
+
+
+def _draw_icon_restart(hdc, x, y, size, color):
+    """Draw restart/refresh icon (circular arrow)."""
+    NULL_BRUSH = 5
+    pen = gdi32.CreatePen(2, 1, color)
+    old_p = gdi32.SelectObject(hdc, pen)
+    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_BRUSH))
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 3
+    # Circle arc (270 degrees, leaving a gap at top)
+    gdi32.Arc(hdc, cx - r, cy - r, cx + r, cy + r,
+              cx + r, cy, cx, cy - r)
+    # Arrowhead at the end of the arc (top of gap)
+    gdi32.MoveToEx(hdc, cx - 2, cy - r - 1, None)
+    gdi32.LineTo(hdc, cx + 3, cy - r + 2)
+    gdi32.MoveToEx(hdc, cx - 2, cy - r - 1, None)
+    gdi32.LineTo(hdc, cx + 1, cy - r - 4)
     gdi32.SelectObject(hdc, old_p)
     gdi32.SelectObject(hdc, old_b)
     gdi32.DeleteObject(pen)
@@ -279,9 +304,9 @@ class TrayMenu:
         h = HEADER_H_PANEL + PADDING_PANEL
         for item in _ITEMS:
             if item is None:
-                h += SEPARATOR_H
+                h += ITEM_GAP  # separator is just a gap
             else:
-                h += ITEM_H_PANEL
+                h += ITEM_GAP + ITEM_H_PANEL  # gap + item
         return h + PADDING_PANEL
 
     def _create_window(self):
@@ -380,6 +405,8 @@ class TrayMenu:
             _draw_icon_info(hdc, x, y, size, color)
         elif item.get("icon_power"):
             _draw_icon_power(hdc, x, y, size, color)
+        elif item.get("icon_restart"):
+            _draw_icon_restart(hdc, x, y, size, color)
 
     def _paint(self, hwnd):
         ps = _PS()
@@ -496,13 +523,17 @@ class TrayMenu:
 
         for item in _ITEMS:
             if item is None:
-                # Separator
+                # Separator: thin line centered in gap
                 sep_brush = gdi32.CreateSolidBrush(SEPARATOR_BGR)
-                sep_rect = _RECT(PADDING_PANEL, y + 3, w - PADDING_PANEL, y + 4)
+                sep_y = y + ITEM_GAP // 2
+                sep_rect = _RECT(PADDING_PANEL, sep_y, w - PADDING_PANEL, sep_y + 1)
                 user32.FillRect(hdc, ctypes.byref(sep_rect), sep_brush)
                 gdi32.DeleteObject(sep_brush)
-                y += SEPARATOR_H
+                y += ITEM_GAP
                 continue
+
+            # Consistent gap before each item
+            y += ITEM_GAP
 
             item_id = item["id"]
             is_hover = len(self._item_rects) == self._hover_idx
@@ -541,6 +572,17 @@ class TrayMenu:
             user32.DrawTextW(hdc, label, -1, ctypes.byref(lr), 0x0024)  # DT_VCENTER | DT_SINGLELINE
             gdi32.SelectObject(hdc, old_f2)
             gdi32.DeleteObject(label_font)
+
+            # Right-side label (e.g. PID)
+            if item.get("pid_label"):
+                pid_text = f"PID {os.getpid()}"
+                gdi32.SetTextColor(hdc, TEXT_MUTED_BGR)
+                pid_font = gdi32.CreateFontW(-10, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Consolas')
+                old_f3 = gdi32.SelectObject(hdc, pid_font)
+                pr = _RECT(PADDING_PANEL + 26, y, w - PADDING_PANEL - 10, y + ITEM_H_PANEL)
+                user32.DrawTextW(hdc, pid_text, -1, ctypes.byref(pr), 0x0026)  # DT_VCENTER | DT_RIGHT | DT_SINGLELINE
+                gdi32.SelectObject(hdc, old_f3)
+                gdi32.DeleteObject(pid_font)
 
             # Badge (red dot with count)
             if item.get("badge") and badge_count > 0:

@@ -1,6 +1,7 @@
 """Settings and About windows for AgentBell.
 
 Dark-themed custom windows using GDI, consistent with the tray menu style.
+Settings window uses a native EDIT control for scrollable, editable JSON.
 """
 
 import ctypes
@@ -21,9 +22,19 @@ from agentbell.ui.theme import (
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+comctl32 = ctypes.windll.comctl32
 
 LRESULT = ctypes.c_longlong if sys.maxsize > 2**32 else ctypes.c_long
 LP = ctypes.c_longlong if sys.maxsize > 2**32 else ctypes.c_long
+HANDLE = ctypes.c_longlong if sys.maxsize > 2**32 else ctypes.c_long
+
+# Set argtypes for gdi32 functions to handle 64-bit HDC correctly
+gdi32.SetBkMode.argtypes = [ctypes.wintypes.HDC, ctypes.c_int]
+gdi32.SetBkMode.restype = ctypes.c_int
+gdi32.SetTextColor.argtypes = [ctypes.wintypes.HDC, ctypes.c_uint32]
+gdi32.SetTextColor.restype = ctypes.c_uint32
+gdi32.SetBkColor.argtypes = [ctypes.wintypes.HDC, ctypes.c_uint32]
+gdi32.SetBkColor.restype = ctypes.c_uint32
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, LP)
 NULL_PEN = 8
 TRANSPARENT = 1
@@ -33,6 +44,29 @@ DT_CENTER = 1
 DT_VCENTER = 4
 DT_SINGLELINE = 0x20
 DT_WORDBREAK = 0x10
+
+# Win32 constants for EDIT control
+ES_MULTILINE = 0x0004
+ES_AUTOVSCROLL = 0x0040
+ES_WANTRETURN = 0x1000
+WS_VSCROLL = 0x00200000
+WS_HSCROLL = 0x00100000
+WS_VISIBLE = 0x10000000
+WS_CHILD = 0x40000000
+WS_BORDER = 0x00800000
+EM_SETSEL = 0x00B1
+EM_REPLACESEL = 0x00C2
+EM_SETREADONLY = 0x00CF
+EM_SETTABSTOPS = 0x00CB
+WM_CTLCOLOREDIT = 0x0133
+WM_CTLCOLORSTATIC = 0x0138
+WM_SETFONT = 0x0030
+WM_GETTEXTLENGTH = 0x000E
+WM_GETTEXT = 0x000D
+WM_SETTEXT = 0x000C
+GWLP_WNDPROC = -4
+IDC_EDIT = 1001
+IDC_SAVE_BTN = 1002
 
 
 class _PS(ctypes.Structure):
@@ -88,6 +122,23 @@ def _get_settings_content() -> str:
         return f"// 读取失败: {e}"
 
 
+def _save_settings_content(content: str) -> tuple[bool, str]:
+    """Validate and save settings.json content. Returns (success, message)."""
+    settings_path = _get_settings_path()
+    try:
+        # Validate JSON
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            return False, "JSON 根对象必须是 {} 类型"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8")
+        return True, "已保存"
+    except json.JSONDecodeError as e:
+        return False, f"JSON 格式错误: {e}"
+    except Exception as e:
+        return False, f"保存失败: {e}"
+
+
 def _install_hooks() -> tuple[bool, str]:
     """Install hooks. Returns (success, message)."""
     try:
@@ -110,25 +161,39 @@ def _uninstall_hooks() -> tuple[bool, str]:
 
 # ── Settings Window ─────────────────────────────────────────────────────────
 
-WIN_W = 520
-WIN_H = 420
+WIN_W = 560
+WIN_H = 520
+
+# Dark theme colors for EDIT control
+_EDIT_BG_BGR = 0x00121211
+_EDIT_TEXT_BGR = 0x00A0A090
+_EDIT_BG_BRUSH = None  # created lazily
 
 
 class SettingsWindow:
     """Dark-themed settings window for AgentBell."""
 
+    _class_registered = False
+
     def __init__(self):
         self._hwnd = None
         self._wnd_proc_ref = None
         self._class_name = "AgentBellSettings"
+        self._orig_edit_proc = None
+        self._edit_hwnd = None
         self._close_rect = [0, 0, 0, 0]
         self._install_rect = [0, 0, 0, 0]
         self._uninstall_rect = [0, 0, 0, 0]
+        self._save_rect = [0, 0, 0, 0]
         self._hover_btn = ""
         self._status_msg = ""
         self._is_configured = False
+        self._save_feedback = ""
+        self._save_feedback_time = 0.0
 
     def _ensure_class(self):
+        if SettingsWindow._class_registered:
+            return
         user32.DefWindowProcW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, LP]
         user32.DefWindowProcW.restype = LRESULT
 
@@ -138,6 +203,16 @@ class SettingsWindow:
                 return 0
             elif msg == 0x0014:  # WM_ERASEBKGND
                 return 1
+            elif msg == WM_CTLCOLOREDIT:
+                # Dark theme for EDIT control
+                global _EDIT_BG_BRUSH
+                hdc = ctypes.wintypes.HDC(wparam)
+                if _EDIT_BG_BRUSH is None:
+                    _EDIT_BG_BRUSH = gdi32.CreateSolidBrush(_EDIT_BG_BGR)
+                gdi32.SetBkMode(hdc, TRANSPARENT)
+                gdi32.SetTextColor(hdc, _EDIT_TEXT_BGR)
+                gdi32.SetBkColor(hdc, _EDIT_BG_BGR)
+                return _EDIT_BG_BRUSH
             elif msg == 0x0201:  # WM_LBUTTONDOWN
                 x = lparam & 0xFFFF
                 y = (lparam >> 16) & 0xFFFF
@@ -149,6 +224,9 @@ class SettingsWindow:
                     return 0
                 if self._hit_test(x, y, self._uninstall_rect):
                     self._do_uninstall(hwnd)
+                    return 0
+                if self._hit_test(x, y, self._save_rect):
+                    self._do_save(hwnd)
                     return 0
                 return 0
             elif msg == 0x0200:  # WM_MOUSEMOVE
@@ -162,6 +240,8 @@ class SettingsWindow:
                     self._hover_btn = "uninstall"
                 elif self._hit_test(x, y, self._close_rect):
                     self._hover_btn = "close"
+                elif self._hit_test(x, y, self._save_rect):
+                    self._hover_btn = "save"
                 if self._hover_btn != old:
                     user32.InvalidateRect(hwnd, None, True)
                 IDC_HAND = 32649
@@ -172,6 +252,7 @@ class SettingsWindow:
                 user32.SetCursor(user32.LoadCursorW(0, 32512))
                 return 1
             elif msg == 0x0002:  # WM_DESTROY
+                self._edit_hwnd = None
                 self._hwnd = None
                 return 0
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -191,14 +272,17 @@ class SettingsWindow:
         wc.hbrBackground = 0
         wc.cr = user32.LoadCursorW(0, 32512)
         user32.RegisterClassW(ctypes.byref(wc))
+        SettingsWindow._class_registered = True
 
     def show(self):
-        if self._hwnd:
+        if self._hwnd and user32.IsWindow(self._hwnd):
             user32.SetForegroundWindow(self._hwnd)
             return
+        self._hwnd = None
         self._ensure_class()
         self._is_configured, detail = _check_hooks_configured()
         self._status_msg = detail
+        self._save_feedback = ""
 
         sw = user32.GetSystemMetrics(0)
         sh = user32.GetSystemMetrics(1)
@@ -210,11 +294,48 @@ class SettingsWindow:
             ex, self._class_name, "AgentBell 设置", 0x00C00000,  # WS_CAPTION | WS_SYSMENU
             x, y, WIN_W, WIN_H, 0, 0, 0, None,
         )
+        if not self._hwnd:
+            return
         rgn = gdi32.CreateRoundRectRgn(0, 0, WIN_W + 1, WIN_H + 1,
                                         RADIUS_WINDOW * 2, RADIUS_WINDOW * 2)
         user32.SetWindowRgn(self._hwnd, rgn, True)
+
+        # Create EDIT control for settings.json
+        self._create_edit_control()
+
         user32.ShowWindow(self._hwnd, 5)
         user32.SetForegroundWindow(self._hwnd)
+
+    def _create_edit_control(self):
+        """Create the EDIT control for editing settings.json."""
+        PAD = 20
+        # Calculate edit area position (below buttons section)
+        # Hooks section: ~130px, buttons: ~50px, separator+label: ~40px
+        edit_y = 230
+        edit_h = WIN_H - edit_y - PAD - 10
+        edit_w = WIN_W - PAD * 2
+
+        self._edit_hwnd = user32.CreateWindowExW(
+            0, "Edit", "",
+            WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_BORDER,
+            PAD, edit_y, edit_w, edit_h,
+            self._hwnd, IDC_EDIT, 0, None,
+        )
+        if not self._edit_hwnd:
+            return
+
+        # Set monospace font
+        mono_font = gdi32.CreateFontW(-13, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Cascadia Code')
+        user32.SendMessageW(self._edit_hwnd, WM_SETFONT, mono_font, 1)
+
+        # Set tab stops (4 spaces)
+        tab_stop = ctypes.c_uint(32)  # dialog units
+        user32.SendMessageW(self._edit_hwnd, EM_SETTABSTOPS, 1, ctypes.byref(tab_stop))
+
+        # Load content (EDIT control requires \r\n line endings)
+        content = _get_settings_content().replace("\r\n", "\n").replace("\n", "\r\n")
+        buf = ctypes.create_unicode_buffer(content)
+        user32.SendMessageW(self._edit_hwnd, WM_SETTEXT, 0, buf)
 
     def _do_install(self, hwnd):
         ok, msg = _install_hooks()
@@ -224,6 +345,8 @@ class SettingsWindow:
             self._status_msg = f"{detail}\n{msg}"
         else:
             self._status_msg = msg
+        # Refresh edit control with new content
+        self._refresh_edit_content()
         user32.InvalidateRect(hwnd, None, True)
 
     def _do_uninstall(self, hwnd):
@@ -232,7 +355,34 @@ class SettingsWindow:
         self._status_msg = detail
         if not ok:
             self._status_msg = msg
+        self._refresh_edit_content()
         user32.InvalidateRect(hwnd, None, True)
+
+    def _do_save(self, hwnd):
+        """Save the EDIT control content to settings.json."""
+        if not self._edit_hwnd:
+            return
+        # Get text from EDIT control (convert \r\n back to \n for file storage)
+        text_len = user32.SendMessageW(self._edit_hwnd, WM_GETTEXTLENGTH, 0, 0)
+        buf = ctypes.create_unicode_buffer(text_len + 1)
+        user32.SendMessageW(self._edit_hwnd, WM_GETTEXT, text_len + 1, buf)
+        content = buf.value.replace("\r\n", "\n")
+
+        ok, msg = _save_settings_content(content)
+        self._save_feedback = msg
+        self._save_feedback_time = time.time()
+        # Refresh hooks status
+        self._is_configured, detail = _check_hooks_configured()
+        self._status_msg = detail
+        user32.InvalidateRect(hwnd, None, True)
+
+    def _refresh_edit_content(self):
+        """Refresh the EDIT control with current settings.json content."""
+        if not self._edit_hwnd:
+            return
+        content = _get_settings_content().replace("\r\n", "\n").replace("\n", "\r\n")
+        buf = ctypes.create_unicode_buffer(content)
+        user32.SendMessageW(self._edit_hwnd, WM_SETTEXT, 0, buf)
 
     @staticmethod
     def _hit_test(x, y, rect):
@@ -344,9 +494,9 @@ class SettingsWindow:
             y += 40
 
         # Buttons
-        btn_w = 100
-        btn_h = 32
-        btn_gap = 12
+        btn_w = 90
+        btn_h = 30
+        btn_gap = 10
         if self._is_configured:
             self._draw_btn(hdc, PAD, y, btn_w, btn_h, "重新安装",
                            ORANGE_BGR, self._hover_btn == "install", self._install_rect)
@@ -356,62 +506,56 @@ class SettingsWindow:
             self._draw_btn(hdc, PAD, y, btn_w, btn_h, "安装 Hooks",
                            ORANGE_BGR, self._hover_btn == "install", self._install_rect)
             self._uninstall_rect[:] = [0, 0, 0, 0]
-        y += btn_h + 16
+        y += btn_h + 12
 
         # Separator
         sep_brush = gdi32.CreateSolidBrush(SEPARATOR_BGR)
         sep_rect = _RECT(PAD, y, w - PAD, y + 1)
         user32.FillRect(hdc, ctypes.byref(sep_rect), sep_brush)
         gdi32.DeleteObject(sep_brush)
-        y += 12
+        y += 10
 
-        # ── Settings Content Section ──
+        # ── Settings Content Label + Save button ──
         section_font2 = gdi32.CreateFontW(-13, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f = gdi32.SelectObject(hdc, section_font2)
         gdi32.SetTextColor(hdc, LIGHT_BGR)
-        sr2 = _RECT(PAD, y, w - PAD, y + 20)
-        user32.DrawTextW(hdc, "settings.json 内容", -1, ctypes.byref(sr2), DT_LEFT | DT_VCENTER)
+        sr2 = _RECT(PAD, y, w - PAD - 80, y + 20)
+        user32.DrawTextW(hdc, "settings.json", -1, ctypes.byref(sr2), DT_LEFT | DT_VCENTER)
         gdi32.SelectObject(hdc, old_f)
         gdi32.DeleteObject(section_font2)
+
+        # Save button (right side of label)
+        save_btn_w = 70
+        self._draw_btn(hdc, w - PAD - save_btn_w, y - 2, save_btn_w, 24, "保存",
+                       GREEN_BGR, self._hover_btn == "save", self._save_rect)
         y += 26
 
-        # Content box
-        box_h = h - y - PAD
-        if box_h > 20:
-            # Background
-            box_brush = gdi32.CreateSolidBrush(0x00121211)
-            box_rect = _RECT(PAD, y, w - PAD, y + box_h)
-            user32.FillRect(hdc, ctypes.byref(box_rect), box_brush)
-            gdi32.DeleteObject(box_brush)
-            # Border
-            border_pen = gdi32.CreatePen(1, 1, SEPARATOR_BGR)
-            old_bp = gdi32.SelectObject(hdc, border_pen)
-            old_bb = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
-            gdi32.RoundRect(hdc, PAD, y, w - PAD, y + box_h, 6, 6)
-            gdi32.SelectObject(hdc, old_bp)
-            gdi32.SelectObject(hdc, old_bb)
-            gdi32.DeleteObject(border_pen)
-            # Content
-            content = _get_settings_content()
-            mono_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Cascadia Code')
-            old_f = gdi32.SelectObject(hdc, mono_font)
-            gdi32.SetTextColor(hdc, 0x00A0A090)
-            content_rect = _RECT(PAD + 8, y + 6, w - PAD - 8, y + box_h - 6)
-            user32.DrawTextW(hdc, content[:2000], -1, ctypes.byref(content_rect), DT_LEFT | DT_WORDBREAK)
+        # Save feedback
+        if self._save_feedback and time.time() - self._save_feedback_time < 3:
+            fb_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+            old_f = gdi32.SelectObject(hdc, fb_font)
+            fb_color = GREEN_BGR if "已保存" in self._save_feedback else RED_BGR
+            gdi32.SetTextColor(hdc, fb_color)
+            fb_rect = _RECT(PAD + 90, y - 22, w - PAD - 80, y - 2)
+            user32.DrawTextW(hdc, self._save_feedback, -1, ctypes.byref(fb_rect), DT_LEFT | DT_VCENTER)
             gdi32.SelectObject(hdc, old_f)
-            gdi32.DeleteObject(mono_font)
+            gdi32.DeleteObject(fb_font)
+
+        # EDIT control area is managed by the native control, no GDI drawing needed here
 
         user32.EndPaint(hwnd, ctypes.byref(ps))
 
 
 # ── About Dialog ────────────────────────────────────────────────────────────
 
-ABOUT_W = 380
-ABOUT_H = 300
+ABOUT_W = 400
+ABOUT_H = 370
 
 
 class AboutWindow:
     """Dark-themed About window for AgentBell."""
+
+    _class_registered = False
 
     def __init__(self):
         self._hwnd = None
@@ -421,6 +565,8 @@ class AboutWindow:
         self._hover_close = False
 
     def _ensure_class(self):
+        if AboutWindow._class_registered:
+            return
         user32.DefWindowProcW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, LP]
         user32.DefWindowProcW.restype = LRESULT
 
@@ -471,11 +617,13 @@ class AboutWindow:
         wc.hbrBackground = 0
         wc.cr = user32.LoadCursorW(0, 32512)
         user32.RegisterClassW(ctypes.byref(wc))
+        AboutWindow._class_registered = True
 
     def show(self):
-        if self._hwnd:
+        if self._hwnd and user32.IsWindow(self._hwnd):
             user32.SetForegroundWindow(self._hwnd)
             return
+        self._hwnd = None
         self._ensure_class()
 
         sw = user32.GetSystemMetrics(0)
@@ -488,6 +636,8 @@ class AboutWindow:
             ex, self._class_name, "关于 AgentBell", 0x00C00000,
             x, y, ABOUT_W, ABOUT_H, 0, 0, 0, None,
         )
+        if not self._hwnd:
+            return
         rgn = gdi32.CreateRoundRectRgn(0, 0, ABOUT_W + 1, ABOUT_H + 1,
                                         RADIUS_WINDOW * 2, RADIUS_WINDOW * 2)
         user32.SetWindowRgn(self._hwnd, rgn, True)
