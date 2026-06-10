@@ -53,7 +53,7 @@ _ITEMS = [
     {"id": ID_RECENT, "icon_clipboard": True, "label": "最近事件", "badge": True},
     {"id": ID_MUTE, "icon_mute": True, "label": "静音 30 分钟", "toggle": True},
     None,  # separator
-    {"id": ID_SETTINGS, "icon_gear": True, "label": "设置", "disabled": True},
+    {"id": ID_SETTINGS, "icon_gear": True, "label": "设置"},
     {"id": ID_ABOUT, "icon_info": True, "label": "关于 AgentBell"},
     None,  # separator
     {"id": ID_QUIT, "icon_power": True, "label": "退出 AgentBell"},
@@ -249,6 +249,32 @@ class TrayMenu:
         wc.cr = user32.LoadCursorW(0, 32512)
         user32.RegisterClassW(ctypes.byref(wc))
 
+    def _check_hooks_configured(self) -> bool:
+        """Check if Claude Code hooks are configured for AgentBell."""
+        import json
+        import os
+        from pathlib import Path
+        settings_path = Path(os.environ.get("USERPROFILE", Path.home())) / ".claude" / "settings.json"
+        if not settings_path.exists():
+            return False
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            hooks = settings.get("hooks", {})
+            if not isinstance(hooks, dict):
+                return False
+            for entries in hooks.values():
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    for hook in entry.get("hooks", []):
+                        args = hook.get("args", [])
+                        cmd = hook.get("command", "")
+                        if "agentbell" in cmd or any("agentbell" in str(a) for a in args):
+                            return True
+            return False
+        except Exception:
+            return False
+
     def _calc_height(self):
         h = HEADER_H_PANEL + PADDING_PANEL
         for item in _ITEMS:
@@ -400,38 +426,59 @@ class TrayMenu:
         gdi32.SelectObject(hdc, old_if)
         gdi32.DeleteObject(icon_font)
 
-        # Title text
+        # Title text + Status dot + label (all on same line)
         gdi32.SetTextColor(hdc, LIGHT_BGR)
-        header_font = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+        header_font = gdi32.CreateFontW(-13, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f = gdi32.SelectObject(hdc, header_font)
-        hr = _RECT(PADDING_PANEL + icon_size + 8, PADDING_PANEL + 2, w - PADDING_PANEL, PADDING_PANEL + 22)
+        title_x = PADDING_PANEL + icon_size + 8
+        hr = _RECT(title_x, PADDING_PANEL + 4, w - PADDING_PANEL, PADDING_PANEL + 24)
         user32.DrawTextW(hdc, "AgentBell", -1, ctypes.byref(hr), 0)
+
+        # Measure "AgentBell" width to position status after it
+        title_width = len("AgentBell") * 8  # approximate width
+
+        # Status separator dot
+        sep_x = title_x + title_width + 10
+        gdi32.SetTextColor(hdc, MID_GRAY_BGR)
+        sep_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+        old_f2 = gdi32.SelectObject(hdc, sep_font)
+        sep_rect = _RECT(sep_x, PADDING_PANEL + 4, sep_x + 12, PADDING_PANEL + 24)
+        user32.DrawTextW(hdc, "·", -1, ctypes.byref(sep_rect), 0x0004)  # DT_VCENTER
 
         # Status dot + label
         is_muted = self.daemon.is_muted()
-        dot_color = GREEN_BGR if not is_muted else MID_GRAY_BGR
+        is_configured = self._check_hooks_configured()
+        if not is_configured:
+            dot_color = RED_BGR
+            status_text = "待配置"
+        elif is_muted:
+            dot_color = MID_GRAY_BGR
+            remaining = int((self.daemon._muted_until - time.time()) / 60)
+            status_text = f"已静音 · 剩余 {remaining} 分钟" if remaining > 0 else "已静音"
+        else:
+            dot_color = GREEN_BGR
+            status_text = "运行中"
+
         dot_brush = gdi32.CreateSolidBrush(dot_color)
         old_b = gdi32.SelectObject(hdc, dot_brush)
         old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
-        dot_x = PADDING_PANEL + icon_size + 8
-        dot_y = PADDING_PANEL + 26
-        gdi32.Ellipse(hdc, dot_x, dot_y, dot_x + 6, dot_y + 6)
+        dot_x = sep_x + 14
+        dot_y = PADDING_PANEL + 10
+        gdi32.Ellipse(hdc, dot_x, dot_y, dot_x + 7, dot_y + 7)
         gdi32.SelectObject(hdc, old_b)
         gdi32.SelectObject(hdc, old_p)
         gdi32.DeleteObject(dot_brush)
 
-        gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-        status_font = gdi32.CreateFontW(-9, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-        old_f2 = gdi32.SelectObject(hdc, status_font)
-        sr = _RECT(dot_x + 10, dot_y - 1, w - PADDING_PANEL, dot_y + 14)
-        if is_muted:
-            remaining = int((self.daemon._muted_until - time.time()) / 60)
-            status_text = f"已静音 · 剩余 {remaining} 分钟" if remaining > 0 else "已静音"
-        else:
-            status_text = "运行中"
-        user32.DrawTextW(hdc, status_text, -1, ctypes.byref(sr), 0)
-        gdi32.SelectObject(hdc, old_f2)
+        status_color = LIGHT_BGR if is_configured else RED_BGR
+        gdi32.SetTextColor(hdc, status_color)
+        status_font = gdi32.CreateFontW(-11, 0, 0, 0, 500, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+        old_f3 = gdi32.SelectObject(hdc, status_font)
+        sr = _RECT(dot_x + 10, PADDING_PANEL + 4, w - PADDING_PANEL, PADDING_PANEL + 24)
+        user32.DrawTextW(hdc, status_text, -1, ctypes.byref(sr), 0x0004)  # DT_VCENTER
+        gdi32.SelectObject(hdc, old_f3)
         gdi32.DeleteObject(status_font)
+        gdi32.SelectObject(hdc, old_f2)
+        gdi32.DeleteObject(sep_font)
         gdi32.SelectObject(hdc, old_f)
         gdi32.DeleteObject(header_font)
 

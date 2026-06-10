@@ -22,6 +22,7 @@ from agentbell.theme import (
     GREEN,
     LIGHT,
     MID_GRAY,
+    RED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     TOAST_BG,
@@ -57,10 +58,14 @@ _TEXT_SECONDARY_BGR = _hex_to_bgr(TEXT_SECONDARY)
 _MID_GRAY_BGR = _hex_to_bgr(MID_GRAY)
 _LIGHT_BGR = _hex_to_bgr(LIGHT)
 _GREEN_BGR = _hex_to_bgr(GREEN)
+_RED_BGR = _hex_to_bgr(RED)
 
 _GHOST_BG = 0x001A1917
 _GREEN_ICON_BG = 0x00171E18
 _ORANGE_ICON_BG = 0x001E2A29
+_BLUE_ICON_BG = 0x00292A1E  # 蓝色图标背景
+_RED_ICON_BG = 0x005050C7  # 红色图标背景
+_GRAY_ICON_BG = 0x001A1917  # 灰色图标背景
 
 # Toast auto-dismiss in ms
 TOAST_DISMISS_MS = 8000
@@ -141,21 +146,21 @@ state = "compact"
 hwnd_ref = [0]
 
 # Shadow extends window by SHADOW_EXTEND pixels on each side
-SHADOW_EXTEND = 24
-COMPACT_W, COMPACT_H = 860, 180
-EXPANDED_W, EXPANDED_H = 860, 300
+SHADOW_EXTEND = 20
+COMPACT_W, COMPACT_H = 420, 120
+EXPANDED_W, EXPANDED_H = 420, 200
 # Total window includes shadow area
 TOTAL_COMPACT_W = COMPACT_W + SHADOW_EXTEND * 2
 TOTAL_COMPACT_H = COMPACT_H + SHADOW_EXTEND * 2
 TOTAL_EXPANDED_W = EXPANDED_W + SHADOW_EXTEND * 2
 TOTAL_EXPANDED_H = EXPANDED_H + SHADOW_EXTEND * 2
-PAD = 20
-ICON_SZ = 48
-ICON_TEXT_GAP = 16
-BTN_H = 36
-BTN_RADIUS = 10
-BTN_GAP = 10
-WINDOW_RADIUS = 18
+PAD = 12
+ICON_SZ = 36
+ICON_TEXT_GAP = 12
+BTN_H = 28
+BTN_RADIUS = 8
+BTN_GAP = 8
+WINDOW_RADIUS = 12
 
 btn_action_rect = [0, 0, 0, 0]
 btn_detail_rect = [0, 0, 0, 0]
@@ -163,6 +168,8 @@ btn_close_rect = [0, 0, 0, 0]
 
 ORANGE_ACCENT_BGR = 0x005777D9
 ORANGE_ACCENT_BG = 0x00876633
+RED_BGR = {_RED_BGR}
+RED_ACCENT_BG = 0x005050c7
 
 def pt_in_rect(px, py, r):
     return r[0] <= px <= r[2] and r[1] <= py <= r[3]
@@ -188,7 +195,7 @@ def draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h):
     for i in range(8, 0, -1):
         off = i * 3
         # Shadow color: darker near window, lighter far away
-        intensity = int(12 + (8 - i) * 8)  # 12..68
+        intensity = int(8 + (8 - i) * 4)  # 8..36 (darker shadow)
         sc = (intensity << 16) | (intensity << 8) | intensity
         brush = gdi32.CreateSolidBrush(sc)
         old_b = gdi32.SelectObject(hdc, brush)
@@ -233,34 +240,34 @@ def draw_mono_text(hdc, x, y, w, h, text, color, font_size):
     gdi32.DeleteObject(f)
 
 def draw_icon(hdc, x, y, size=ICON_SZ):
-    draw_rounded_rect_filled(hdc, x, y, size, size, 10, ICON_BG)
-    draw_text_centered(hdc, x, y, size, size, icon_symbol, ACCENT, -16, 700)
+    draw_rounded_rect_filled(hdc, x, y, size, size, 8, ICON_BG)
+    draw_text_centered(hdc, x, y, size, size, icon_symbol, RED_BGR, -14, 700)
 
 def draw_eyebrow(hdc, x, y, w):
     dot_brush = gdi32.CreateSolidBrush(ACCENT)
     old_b = gdi32.SelectObject(hdc, dot_brush)
     old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
-    gdi32.Ellipse(hdc, x, y+2, x+7, y+9)
+    gdi32.Ellipse(hdc, x, y+2, x+5, y+7)
     gdi32.SelectObject(hdc, old_b)
     gdi32.SelectObject(hdc, old_p)
     gdi32.DeleteObject(dot_brush)
     label = eyebrow
     if session_label:
         label = eyebrow + " · " + session_label
-    draw_text_left(hdc, x+11, y, w-11, 14, label, MID_GRAY, -12, 400)
+    draw_text_left(hdc, x+8, y, w-8, 12, label, MID_GRAY, -10, 400)
 
 def draw_close_btn(hdc, x, y):
-    draw_text_centered(hdc, x, y, 28, 28, "\\u00d7", MID_GRAY, -16, 400)
-    btn_close_rect[:] = [x, y, x+28, y+28]
+    draw_text_centered(hdc, x, y, 22, 22, "\\u00d7", MID_GRAY, -12, 400)
+    btn_close_rect[:] = [x, y, x+22, y+22]
 
 def draw_ghost_btn(hdc, x, y, w, text, rect_store):
     draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, GHOST_BG)
-    draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 400)
+    draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -10, 400)
     rect_store[:] = [x, y, x+w, y+BTN_H]
 
 def draw_orange_btn(hdc, x, y, w, text, rect_store):
-    """Draw Soft Orange primary action button."""
-    draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, ORANGE_ACCENT_BG)
+    """Draw Soft Red primary action button."""
+    draw_rounded_rect_filled(hdc, x, y, w, BTN_H, BTN_RADIUS, RED_ACCENT_BG)
     draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 600)
     rect_store[:] = [x, y, x+w, y+BTN_H]
 
@@ -269,51 +276,51 @@ def draw_header_and_body(hdc, content_w):
     S = SHADOW_EXTEND
     # Icon (large, left side)
     icon_x = S + PAD
-    icon_y = S + PAD + 4
+    icon_y = S + PAD + 2
     draw_icon(hdc, icon_x, icon_y, ICON_SZ)
 
     # Text area (center, after icon)
     text_x = icon_x + ICON_SZ + ICON_TEXT_GAP
-    text_right = S + content_w - PAD - 120  # leave room for buttons
+    text_right = S + content_w - PAD - 90  # leave room for buttons
     text_w = text_right - text_x
 
     # Eyebrow (status dot + label)
-    draw_eyebrow(hdc, text_x, S + PAD + 6, text_w)
+    draw_eyebrow(hdc, text_x, S + PAD + 4, text_w)
 
     # Title (bold)
-    draw_text_left(hdc, text_x, S + PAD + 24, text_w, 22, title, TEXT_PRIMARY, -16, 650)
+    draw_text_left(hdc, text_x, S + PAD + 18, text_w, 18, title, TEXT_PRIMARY, -13, 650)
 
     # Description
     if desc:
-        draw_text_left(hdc, text_x, S + PAD + 50, text_w, 18, desc, TEXT_SECONDARY, -13, 400)
+        draw_text_left(hdc, text_x, S + PAD + 36, text_w, 14, desc, TEXT_SECONDARY, -11, 400)
 
     # Project pill
     pill_text = session_label or ""
     if pill_text:
-        pill_w = max(50, len(pill_text) * 8 + 16)
+        pill_w = max(40, len(pill_text) * 7 + 12)
         pill_x = text_x
-        pill_y = S + PAD + 76
-        pill_h = 22
+        pill_y = S + PAD + 52
+        pill_h = 18
         pill_pen = gdi32.CreatePen(1, 1, MID_GRAY)
         old_pen = gdi32.SelectObject(hdc, pill_pen)
         old_brush2 = gdi32.SelectObject(hdc, gdi32.GetStockObject(4))
-        gdi32.RoundRect(hdc, pill_x, pill_y, pill_x + pill_w, pill_y + pill_h, 6, 6)
+        gdi32.RoundRect(hdc, pill_x, pill_y, pill_x + pill_w, pill_y + pill_h, 5, 5)
         gdi32.SelectObject(hdc, old_pen)
         gdi32.SelectObject(hdc, old_brush2)
         gdi32.DeleteObject(pill_pen)
-        draw_text_centered(hdc, pill_x, pill_y, pill_w, pill_h, pill_text, MID_GRAY, -10, 400)
+        draw_text_centered(hdc, pill_x, pill_y, pill_w, pill_h, pill_text, MID_GRAY, -9, 400)
 
     # Close button (top right)
-    draw_close_btn(hdc, S + content_w - 34, S + 8)
+    draw_close_btn(hdc, S + content_w - 28, S + 6)
 
     # Buttons (right side, vertically centered)
-    btn_x = S + content_w - PAD - 100
+    btn_x = S + content_w - PAD - 80
     btn_center_y = S + content_h // 2 - BTN_H // 2
     if has_detail:
-        draw_orange_btn(hdc, btn_x, btn_center_y - BTN_H - BTN_GAP // 2, 100, "我知道了", btn_action_rect)
-        draw_ghost_btn(hdc, btn_x, btn_center_y + BTN_GAP // 2, 100, "查看详情", btn_detail_rect)
+        draw_orange_btn(hdc, btn_x, btn_center_y - BTN_H - BTN_GAP // 2, 80, "我知道了", btn_action_rect)
+        draw_ghost_btn(hdc, btn_x, btn_center_y + BTN_GAP // 2, 80, "查看详情", btn_detail_rect)
     else:
-        draw_orange_btn(hdc, btn_x, btn_center_y, 100, "我知道了", btn_action_rect)
+        draw_orange_btn(hdc, btn_x, btn_center_y, 80, "我知道了", btn_action_rect)
 
 def draw_compact(hdc, total_w, total_h):
     content_w, content_h = COMPACT_W, COMPACT_H
@@ -325,25 +332,25 @@ def draw_expanded(hdc, total_w, total_h):
     draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h)
     draw_header_and_body(hdc, content_w)
     S = SHADOW_EXTEND
-    dy = S + 110
+    dy = S + 80
     panel_w = content_w - PAD * 2
-    draw_rounded_rect_filled(hdc, S + PAD, dy, panel_w, 80, 10, BG_ELEVATED)
-    detail_x = S + PAD + 16
-    detail_w = panel_w - 32
-    draw_text_left(hdc, detail_x, dy+8, detail_w, 18, "将执行以下操作", TEXT_PRIMARY, -13, 600)
+    draw_rounded_rect_filled(hdc, S + PAD, dy, panel_w, 50, 6, BG_ELEVATED)
+    detail_x = S + PAD + 12
+    detail_w = panel_w - 24
+    draw_text_left(hdc, detail_x, dy+6, detail_w, 14, "将执行以下操作", TEXT_PRIMARY, -11, 600)
     if tool_name:
-        draw_text_left(hdc, detail_x, dy+30, detail_w, 18, tool_name, TEXT_SECONDARY, -13, 400)
+        draw_text_left(hdc, detail_x, dy+22, detail_w, 14, tool_name, TEXT_SECONDARY, -11, 400)
     elif cmd_text:
-        draw_mono_text(hdc, detail_x, dy+30, detail_w, 18, cmd_text, ACCENT, -13)
+        draw_mono_text(hdc, detail_x, dy+22, detail_w, 14, cmd_text, ACCENT, -11)
     elif proj_path:
-        draw_text_left(hdc, detail_x, dy+30, detail_w, 18, proj_path, TEXT_SECONDARY, -13, 400)
+        draw_text_left(hdc, detail_x, dy+22, detail_w, 14, proj_path, TEXT_SECONDARY, -11, 400)
     else:
-        draw_text_left(hdc, detail_x, dy+30, detail_w, 18, DETAIL_FALLBACK, MID_GRAY, -13, 400)
+        draw_text_left(hdc, detail_x, dy+22, detail_w, 14, DETAIL_FALLBACK, MID_GRAY, -11, 400)
     # Buttons at bottom right
-    btn_x = S + content_w - PAD - 100
+    btn_x = S + content_w - PAD - 80
     btn_y = S + content_h - PAD - BTN_H
-    draw_orange_btn(hdc, btn_x, btn_y, 100, "我知道了", btn_action_rect)
-    draw_ghost_btn(hdc, btn_x - BTN_GAP - 100, btn_y, 100, "收起", btn_detail_rect)
+    draw_orange_btn(hdc, btn_x, btn_y, 80, "我知道了", btn_action_rect)
+    draw_ghost_btn(hdc, btn_x - BTN_GAP - 80, btn_y, 80, "收起", btn_detail_rect)
 
 def paint(hwnd):
     ps = PS()
@@ -489,6 +496,28 @@ def _get_active_toast_count() -> int:
     return len([f for f in os.listdir(_TOAST_DIR) if f.endswith(".toast")])
 
 
+def _dismiss_oldest_toast() -> None:
+    """关闭最旧的 toast，为新 toast 腾出空间"""
+    try:
+        toasts = []
+        for f in os.listdir(_TOAST_DIR):
+            if f.endswith(".toast"):
+                path = os.path.join(_TOAST_DIR, f)
+                try:
+                    mtime = os.path.getmtime(path)
+                    toasts.append((mtime, path))
+                except OSError:
+                    pass
+        if toasts:
+            # 按时间排序，删除最旧的
+            toasts.sort(key=lambda x: x[0])
+            oldest_path = toasts[0][1]
+            os.unlink(oldest_path)
+            logger.info("Dismissed oldest toast: %s", os.path.basename(oldest_path))
+    except Exception as e:
+        logger.error("Failed to dismiss oldest toast: %s", e)
+
+
 def _register_toast(toast_id: str) -> str:
     marker = os.path.join(_TOAST_DIR, f"{toast_id}.toast")
     with open(marker, "w") as f:
@@ -529,8 +558,8 @@ def show_toast(
 
     active = _get_active_toast_count()
     if active >= cfg.max_visible_toasts:
-        logger.info("Max toasts reached (%d)", cfg.max_visible_toasts)
-        return
+        # 关闭最旧的 toast，为新 toast 腾出空间
+        _dismiss_oldest_toast()
 
     toast_id = f"{event.type}_{event.id}"
     marker_path = _register_toast(toast_id)
@@ -538,8 +567,21 @@ def show_toast(
     # Resolve display values
     is_done = event.type == "task_done"
     is_error = event.type == "error"
-    accent_bgr = _GREEN_BGR if is_done else (_hex_to_bgr("#c75050") if is_error else _ACCENT)
-    icon_bg_bgr = _GREEN_ICON_BG if is_done else _ORANGE_ICON_BG
+    is_waiting_input = event.type == "waiting_input"
+
+    # 根据事件类型选择不同的颜色
+    if is_done:
+        accent_bgr = _GREEN_BGR
+        icon_bg_bgr = _GREEN_ICON_BG
+    elif is_error:
+        accent_bgr = _hex_to_bgr("#c75050")
+        icon_bg_bgr = _RED_ICON_BG
+    elif is_waiting_input:
+        accent_bgr = _hex_to_bgr("#6a9bcc")  # 蓝色 - 等待输入
+        icon_bg_bgr = _BLUE_ICON_BG
+    else:
+        accent_bgr = _ACCENT  # 橙色 - 等待授权
+        icon_bg_bgr = _ORANGE_ICON_BG
 
     title = event.title or {
         "permission_required": "Claude Code 需要授权",
@@ -609,17 +651,37 @@ def show_toast(
         pythonw = sys.executable
 
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [pythonw, script_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
         )
-        logger.info("Toast launched.")
+        logger.info("Toast launched: pid=%s, script=%s", proc.pid, os.path.basename(script_path))
     except Exception as e:
-        logger.error("Failed to launch toast: %s", e)
+        logger.error("Failed to launch toast with %s: %s", pythonw, e)
+        # Fallback: try sys.executable directly
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=0x08000000,
+            )
+            logger.info("Toast launched via fallback: pid=%s", proc.pid)
+        except Exception as e2:
+            logger.error("Fallback also failed: %s", e2)
 
     def cleanup():
         time.sleep(duration + 2)
+        try:
+            # Check if subprocess had errors
+            if proc and proc.poll() is not None:
+                stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+                if stderr:
+                    logger.warning("Toast subprocess stderr: %s", stderr[:500])
+        except Exception:
+            pass
         try:
             os.unlink(script_path)
         except OSError:

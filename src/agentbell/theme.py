@@ -29,6 +29,7 @@ TEXT_MUTED = "rgba(250, 249, 245, 0.58)"
 ACCENT_PRIMARY = "#d97757"
 ACCENT_HOVER = "#e38a6b"
 ACCENT_PRESSED = "#c76645"
+RED = "#c75050"
 
 CODE_BG = "rgba(250, 249, 245, 0.06)"
 CODE_BORDER = "rgba(250, 249, 245, 0.1)"
@@ -38,10 +39,11 @@ SHADOW_ORANGE = "0 0 32px rgba(217, 119, 87, 0.18)"
 
 # ── Event accent colors ─────────────────────────────────────────────────────
 EVENT_COLORS = {
-    "permission_required": ORANGE,
-    "task_done": GREEN,
-    "error": "#c75050",
-    "info": BLUE,
+    "permission_required": ORANGE,  # 橙色 - 等待授权
+    "waiting_input": BLUE,          # 蓝色 - 等待输入
+    "task_done": GREEN,             # 绿色 - 任务完成
+    "error": RED,                   # 红色 - 错误
+    "info": MID_GRAY,               # 灰色 - 普通通知
 }
 
 # ── Radius ───────────────────────────────────────────────────────────────────

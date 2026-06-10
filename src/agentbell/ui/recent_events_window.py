@@ -14,6 +14,7 @@ from agentbell.ui.theme import (
     BG_BGR, DARK_BGR, BG_ELEVATED_BGR, LIGHT_BGR, MID_GRAY_BGR,
     ORANGE_BGR, GREEN_BGR, BLUE_BGR, RED_BGR,
     BG_CARD_BGR, BG_CARD_HOVER_BGR, BG_HOVER_BGR,
+    BG_CARD_LIGHT_BGR, BG_CARD_LIGHT_HOVER_BGR, TEXT_DARK_BGR,
     BORDER_BGR, SEPARATOR_BGR, TEXT_MUTED_BGR,
     GRADIENT_DARK_BGR, GRADIENT_MID_BGR,
     ORANGE_HOVER_BGR,
@@ -22,6 +23,7 @@ from agentbell.ui.theme import (
     STATE_LABELS, STATUS_BGR,
     FONT_FAMILY,
 )
+from agentbell.ui.settings_window import _check_hooks_configured
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -51,8 +53,9 @@ class _RECT(ctypes.Structure):
 class RecentEventsWindow:
     """Productized dark recent events window."""
 
-    def __init__(self, daemon):
+    def __init__(self, daemon, settings_window=None):
         self.daemon = daemon
+        self._settings_window = settings_window
         self._hwnd = None
         self._visible = False
         self._wnd_proc_ref = None
@@ -83,6 +86,8 @@ class RecentEventsWindow:
                 if self._hit_test(x, y, self._view_all_rect):
                     return 0
                 if self._hit_test(x, y, self._settings_rect):
+                    if self._settings_window:
+                        self._settings_window.show()
                     return 0
                 for card_top, card_bottom, session_id in self._card_rects:
                     if card_top <= y <= card_bottom:
@@ -129,7 +134,7 @@ class RecentEventsWindow:
         wc = WNDCLASS()
         wc.lpfnWndProc = self._wnd_proc_ref
         wc.lpszClassName = self._class_name
-        wc.hbrBackground = gdi32.CreateSolidBrush(BG_BGR)
+        wc.hbrBackground = gdi32.CreateSolidBrush(DARK_BGR)
         wc.cr = user32.LoadCursorW(0, 32512)
         user32.RegisterClassW(ctypes.byref(wc))
 
@@ -278,8 +283,11 @@ class RecentEventsWindow:
         events = self.daemon.event_store.get_recent(20)
         count = self.daemon.event_store.count()
         t = time.strftime("%H:%M")
-        subtitle = f"运行中 · {count} 个事件 · {t}"
-        gdi32.SetTextColor(hdc, MID_GRAY_BGR)
+        is_cfg, cfg_detail = _check_hooks_configured()
+        status_word = "运行中" if is_cfg else "待配置"
+        subtitle = f"{status_word} · {count} 个事件 · {t}"
+        sub_color = RED_BGR if not is_cfg else MID_GRAY_BGR
+        gdi32.SetTextColor(hdc, sub_color)
         sub_font = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f = gdi32.SelectObject(hdc, sub_font)
         sr = _RECT(PAD, PAD + 22, w - 30, PAD + 36)
@@ -349,13 +357,13 @@ class RecentEventsWindow:
 
                 is_hovered = (idx == self._hover_card_idx)
 
-                # Card background (hover: brighter bg + orange border)
+                # Card background (light theme with hover effect)
                 if is_hovered:
                     self._draw_rounded_rect(hdc, PAD, card_y, card_w, card_h, RADIUS_CARD,
-                                            BG_CARD_HOVER_BGR, ORANGE_HOVER_BGR)
+                                            BG_CARD_LIGHT_HOVER_BGR, ORANGE_HOVER_BGR)
                 else:
                     self._draw_rounded_rect(hdc, PAD, card_y, card_w, card_h, RADIUS_CARD,
-                                            BG_CARD_BGR, BORDER_BGR)
+                                            BG_CARD_LIGHT_BGR, BORDER_BGR)
 
                 # Status dot
                 dot_color = STATUS_BGR.get(s.get("kind", ""), MID_GRAY_BGR)
@@ -371,7 +379,7 @@ class RecentEventsWindow:
 
                 # Line 1: Status label + Timestamp
                 state_label = STATE_LABELS.get(s.get("kind", ""), s.get("kind", ""))
-                gdi32.SetTextColor(hdc, LIGHT_BGR)
+                gdi32.SetTextColor(hdc, TEXT_DARK_BGR)
                 label_font = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
                 old_f = gdi32.SelectObject(hdc, label_font)
                 lr = _RECT(dot_x + 14, card_y + 12, card_w - 80, card_y + 26)
@@ -384,13 +392,13 @@ class RecentEventsWindow:
                 gdi32.SelectObject(hdc, old_f)
                 gdi32.DeleteObject(label_font)
 
-                # Line 2: Session · Event
-                gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-                info_font = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+                # Line 2: Project name (bold) · Event type
+                gdi32.SetTextColor(hdc, 0x00404040)
+                info_font = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
                 old_f = gdi32.SelectObject(hdc, info_font)
-                info_text = f"{s.get('session_label', '')} · {s.get('hook_event_name', '')}"
+                project_name = s.get('session_label', 'Unknown')
                 ir = _RECT(dot_x + 14, card_y + 30, card_w - 12, card_y + 44)
-                user32.DrawTextW(hdc, info_text, -1, ctypes.byref(ir), DT_LEFT | DT_VCENTER)
+                user32.DrawTextW(hdc, project_name, -1, ctypes.byref(ir), DT_LEFT | DT_VCENTER)
                 gdi32.SelectObject(hdc, old_f)
                 gdi32.DeleteObject(info_font)
 
@@ -404,7 +412,7 @@ class RecentEventsWindow:
                     "info": "请回到 Claude Code 终端查看。",
                 }
                 msg = msg_fallbacks.get(kind, "请回到 Claude Code 终端查看。")
-                gdi32.SetTextColor(hdc, TEXT_MUTED_BGR)
+                gdi32.SetTextColor(hdc, 0x00808080)
                 msg_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
                 old_f = gdi32.SelectObject(hdc, msg_font)
                 mr = _RECT(dot_x + 14, card_y + 48, card_w - 12, card_y + 64)
