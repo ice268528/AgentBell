@@ -491,7 +491,7 @@ class TrayMenu:
             label_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
             old_f2 = gdi32.SelectObject(hdc, label_font)
             lr = _RECT(PADDING_PANEL + 26, y, w - PADDING_PANEL - 10, y + ITEM_H_PANEL)
-            user32.DrawTextW(hdc, label, -1, ctypes.byref(lr), 0x0004)  # DT_VCENTER
+            user32.DrawTextW(hdc, label, -1, ctypes.byref(lr), 0x0024)  # DT_VCENTER | DT_SINGLELINE
             gdi32.SelectObject(hdc, old_f2)
             gdi32.DeleteObject(label_font)
 
