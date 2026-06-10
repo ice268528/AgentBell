@@ -15,72 +15,76 @@ Windows 系统托盘通知工具，为 Claude Code CLI 提供桌面通知、状�
 - **多会话聚合**：多个 Claude Code 会话同时触发时合并通知
 - **暗色主题 UI**：Claude/Anthropic 暖色系设计语言，圆角暗色面板
 
-## 安装
+## 快速开始（推荐）
 
-### 前置条件
+### 1. 下载
 
-- Windows 10/11
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/)（推荐）或 pip
+从 [GitHub Release](https://github.com/ice268528/AgentBell/releases/tag/v1.0.0) 下载 `AgentBell-v1.0.0-win64.zip`，解压到任意目录。
 
-### 安装 uv
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+解压后目录结构：
+```
+AgentBell/
+├── AgentBell.exe        ← 主程序（托盘守护进程）
+├── AgentBellCLI.exe     ← 命令行工具
+└── _internal/           ← 依赖文件（不要删除）
 ```
 
-### 安装 AgentBell
+### 2. 启动
+
+双击 `AgentBell.exe`，系统托盘出现橙色 >_ 图标：
+- **左键点击**：打开最近事件面板
+- **右键点击**：打开菜单
+
+首次启动时状态显示红色"待配置"，表示尚未安装 hooks。
+
+### 3. 安装 hooks
+
+右键菜单 → 设置 → 点击"安装 Hooks"。
+
+安装前自动备份 `~/.claude/settings.json`，安装后状态变为绿色"已配置"。
+
+### 4. 完成
+
+之后使用 Claude Code 时，AgentBell 会自动弹出通知提醒。无需手动启动 daemon——安装 hooks 后，Claude Code 触发事件时会自动启动 AgentBell（如果未运行）。
+
+### 测试通知
+
+右键菜单 → 设置 → 命令行运行：
+```bash
+AgentBellCLI.exe test
+```
+看到 Toast 弹窗并听到提示音即表示工作正常。
+
+## 从源码安装
+
+需要 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)：
 
 ```bash
 git clone git@github.com:ice268528/AgentBell.git
 cd AgentBell
 uv sync
 
-# 全局安装（可选）
-uv tool install .
-```
-
-## 快速开始
-
-### 1. 启动托盘守护进程
-
-```bash
+# 启动
 uv run agentbell daemon
-```
 
-启动后系统托盘出现橙色 >_ 图标：
-- **左键点击**：打开最近事件面板
-- **右键点击**：打开菜单
-
-### 2. 安装 Claude Code hooks
-
-通过右键菜单 → 设置 → 安装 Hooks，或命令行：
-
-```bash
+# 安装 hooks
 uv run agentbell install-claude-hooks
-```
 
-安装前自动备份 `~/.claude/settings.json`。
-
-### 3. 测试通知
-
-```bash
+# 测试
 uv run agentbell test
 ```
-
-看到 Toast 弹窗并听到提示音即表示工作正常。
 
 ## CLI 命令
 
 | 命令 | 说明 |
 |------|------|
-| `agentbell daemon` | 启动托盘守护进程 |
-| `agentbell test` | 发送测试通知 |
-| `agentbell test --style done` | 测试完成风格 |
-| `agentbell test --style error` | 测试错误风格 |
-| `agentbell test --style waiting_input` | 测试等待输入风格 |
-| `agentbell install-claude-hooks` | 安装 Claude Code hooks |
-| `agentbell uninstall-claude-hooks` | 卸载 Claude Code hooks |
+| `AgentBellCLI.exe daemon` | 启动托盘守护进程 |
+| `AgentBellCLI.exe test` | 发送测试通知 |
+| `AgentBellCLI.exe test --style done` | 测试完成风格 |
+| `AgentBellCLI.exe test --style error` | 测试错误风格 |
+| `AgentBellCLI.exe test --style waiting_input` | 测试等待输入风格 |
+| `AgentBellCLI.exe install-claude-hooks` | 安装 Claude Code hooks |
+| `AgentBellCLI.exe uninstall-claude-hooks` | 卸载 Claude Code hooks |
 
 ## 托盘菜单
 
@@ -135,8 +139,8 @@ AgentBell/
 │       ├── settings_window.py       # 设置/关于窗口
 │       ├── icons.py         # 托盘图标生成
 │       └── theme.py         # UI 常量和颜色
+├── scripts/                 # 构建脚本和入口
 ├── docs/                    # 文档
-├── scripts/                 # 辅助脚本
 ├── pyproject.toml
 └── README.md
 ```
@@ -152,12 +156,12 @@ AgentBell/
 
 ### 托盘图标不显示？
 
-1. 确认 `agentbell daemon` 正在运行
+1. 确认 `AgentBell.exe` 正在运行（任务管理器查看进程）
 2. 检查 Windows 任务栏设置中是否隐藏了图标
 
-### 需要手动启动 daemon 吗？
+### 需要手动启动 AgentBell 吗？
 
-不需要。安装 hooks 后，Claude Code 触发事件时会自动启动 daemon（最多等待 500ms）。已运行时不会重复启动。你也可以手动运行 `AgentBell.exe` 或 `agentbell daemon` 提前启动。
+首次使用需要手动启动 `AgentBell.exe` 并安装 hooks。安装 hooks 后，Claude Code 触发事件时会自动启动 AgentBell（如果未运行），无需手动管理。已运行时不会重复启动。
 
 ## 许可证
 
