@@ -155,13 +155,9 @@ AgentBell/
 1. 确认 `agentbell daemon` 正在运行
 2. 检查 Windows 任务栏设置中是否隐藏了图标
 
-### 如何开机自启动？
+### 需要手动启动 daemon 吗？
 
-创建快捷方式放到启动文件夹：
-```powershell
-shell:startup
-```
-快捷方式目标：`pythonw -m agentbell daemon`
+不需要。安装 hooks 后，Claude Code 触发事件时会自动启动 daemon（最多等待 500ms）。已运行时不会重复启动。你也可以手动运行 `AgentBell.exe` 或 `agentbell daemon` 提前启动。
 
 ## 许可证
 
