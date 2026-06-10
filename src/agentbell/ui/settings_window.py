@@ -102,7 +102,8 @@ def _check_hooks_configured() -> tuple[bool, str]:
                 for hook in entry.get("hooks", []):
                     args = hook.get("args", [])
                     cmd = hook.get("command", "")
-                    if "agentbell" in cmd or any("agentbell" in str(a) for a in args):
+                    cmd_lower = cmd.lower()
+                    if "agentbell" in cmd_lower or any("agentbell" in str(a).lower() for a in args):
                         found_events.append(event_type)
         if found_events:
             return True, f"已配置 ({', '.join(found_events)})"

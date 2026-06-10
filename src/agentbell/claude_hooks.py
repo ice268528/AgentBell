@@ -78,7 +78,8 @@ def _is_agentbell_hook_entry(entry: dict) -> bool:
     for hook in entry.get("hooks", []):
         args = hook.get("args", [])
         cmd = hook.get("command", "")
-        if "agentbell" in cmd or any("agentbell" in str(a) for a in args):
+        cmd_lower = cmd.lower()
+        if "agentbell" in cmd_lower or any("agentbell" in str(a).lower() for a in args):
             return True
     return False
 
