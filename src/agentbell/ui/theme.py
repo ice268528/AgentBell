@@ -74,6 +74,11 @@ BG_CARD_HOVER_BGR = 0x001A1918
 BG_HOVER_BGR = 0x00191817
 BG_ACTIVE_BGR = 0x00182A29
 
+# Light card colors for recent events
+BG_CARD_LIGHT_BGR = 0x00F5F4F0
+BG_CARD_LIGHT_HOVER_BGR = 0x00EDECEA
+TEXT_DARK_BGR = 0x00141312
+
 # Gradient BGR (approximated)
 GRADIENT_DARK_BGR = hex_to_bgr(GRADIENT_DARK)
 GRADIENT_MID_BGR = hex_to_bgr(GRADIENT_MID)
@@ -135,18 +140,18 @@ FONT_FAMILY = 'Segoe UI, Microsoft YaHei UI, sans-serif'
 FONT_MONO = 'Cascadia Code, Consolas, monospace'
 
 # ── Window dimensions ────────────────────────────────────────────────────────
-RECENT_EVENTS_W = 840
-RECENT_EVENTS_H = 520
-RECENT_EVENTS_MIN_H = 280
-TRAY_MENU_W = 380
-TRAY_MENU_MIN_H = 320
+RECENT_EVENTS_W = 460
+RECENT_EVENTS_H = 360
+RECENT_EVENTS_MIN_H = 220
+TRAY_MENU_W = 240
+TRAY_MENU_MIN_H = 200
 
 # ── Panel dimensions ────────────────────────────────────────────────────────
-HEADER_H_PANEL = 68     # brand header in tray panel
-ITEM_H_PANEL = 68       # menu item height in tray panel
-ITEM_H_MENU = 42        # compact menu item height
-SEPARATOR_H = 8
-PADDING_PANEL = 12
+HEADER_H_PANEL = 48     # brand header in tray panel
+ITEM_H_PANEL = 36       # menu item height in tray panel
+ITEM_H_MENU = 32        # compact menu item height
+SEPARATOR_H = 6
+PADDING_PANEL = 8
 
 # ── Toast dimensions ────────────────────────────────────────────────────────
 TOAST_W = 440

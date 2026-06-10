@@ -13,7 +13,7 @@ import time
 
 from agentbell.ui.theme import (
     BG_BGR, DARK_BGR, BG_ELEVATED_BGR, LIGHT_BGR, MID_GRAY_BGR,
-    ORANGE_BGR, GREEN_BGR, BG_HOVER_BGR, BG_ACTIVE_BGR,
+    ORANGE_BGR, GREEN_BGR, RED_BGR, BG_HOVER_BGR, BG_ACTIVE_BGR,
     BORDER_BGR, SEPARATOR_BGR, TEXT_MUTED_BGR,
     TRAY_MENU_W, TRAY_MENU_MIN_H, RADIUS_WINDOW,
     HEADER_H_PANEL, ITEM_H_PANEL, PADDING_PANEL,
@@ -64,9 +64,11 @@ SEPARATOR_H = 8
 
 def _draw_icon_clipboard(hdc, x, y, size, color):
     """Draw clipboard icon (two overlapping rectangles)."""
+    # Use NULL_BRUSH to draw only outlines
+    NULL_BRUSH = 5
     pen = gdi32.CreatePen(1, 1, color)
     old_p = gdi32.SelectObject(hdc, pen)
-    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_BRUSH))
     # Back rectangle
     gdi32.RoundRect(hdc, x + 2, y + 2, x + size - 2, y + size - 2, 2, 2)
     # Front rectangle (offset)
@@ -78,9 +80,10 @@ def _draw_icon_clipboard(hdc, x, y, size, color):
 
 def _draw_icon_mute(hdc, x, y, size, color):
     """Draw mute bell icon (bell + diagonal slash)."""
+    NULL_BRUSH = 5
     pen = gdi32.CreatePen(1, 1, color)
     old_p = gdi32.SelectObject(hdc, pen)
-    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_BRUSH))
     # Bell body (simplified as arc)
     cx, cy = x + size // 2, y + size // 2
     r = size // 3
@@ -98,9 +101,10 @@ def _draw_icon_mute(hdc, x, y, size, color):
 
 def _draw_icon_gear(hdc, x, y, size, color):
     """Draw gear icon (simplified as circle with teeth)."""
+    NULL_BRUSH = 5
     pen = gdi32.CreatePen(1, 1, color)
     old_p = gdi32.SelectObject(hdc, pen)
-    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_BRUSH))
     cx, cy = x + size // 2, y + size // 2
     r = size // 3
     gdi32.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
@@ -121,9 +125,10 @@ def _draw_icon_gear(hdc, x, y, size, color):
 
 def _draw_icon_info(hdc, x, y, size, color):
     """Draw question mark in circle."""
+    NULL_BRUSH = 5
     pen = gdi32.CreatePen(1, 1, color)
     old_p = gdi32.SelectObject(hdc, pen)
-    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_BRUSH))
     cx, cy = x + size // 2, y + size // 2
     r = size // 2 - 1
     gdi32.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
@@ -133,7 +138,7 @@ def _draw_icon_info(hdc, x, y, size, color):
     # "?" text
     gdi32.SetBkMode(hdc, TRANSPARENT)
     gdi32.SetTextColor(hdc, color)
-    f = gdi32.CreateFontW(-12, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+    f = gdi32.CreateFontW(-10, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
     old_f = gdi32.SelectObject(hdc, f)
     rct = _RECT(x, y, x + size, y + size)
     user32.DrawTextW(hdc, "?", -1, ctypes.byref(rct), 0x0001 | 0x0004)
@@ -143,9 +148,10 @@ def _draw_icon_info(hdc, x, y, size, color):
 
 def _draw_icon_power(hdc, x, y, size, color):
     """Draw power icon (circle with vertical line)."""
+    NULL_BRUSH = 5
     pen = gdi32.CreatePen(2, 1, color)
     old_p = gdi32.SelectObject(hdc, pen)
-    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
+    old_b = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_BRUSH))
     cx, cy = x + size // 2, y + size // 2
     r = size // 3
     # Arc (top part of circle)
@@ -170,6 +176,8 @@ class TrayMenu:
         self._item_rects = []  # [(top, bottom, id), ...]
         self._wnd_proc_ref = None
         self._class_name = "AgentBellTrayMenu"
+        self._timer_id = 1001
+        self._mouse_monitor_active = False
 
     def _ensure_class(self):
         user32.DefWindowProcW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, LP]
@@ -211,6 +219,18 @@ class TrayMenu:
                 if wparam == 0:
                     self.hide()
                 return 0
+            elif msg == 0x0021:  # WM_MOUSEACTIVATE
+                # Return MA_NOACTIVATE to prevent stealing focus
+                return 3  # MA_NOACTIVATE
+            elif msg == 0x0006:  # WM_ACTIVATE
+                # Hide if being deactivated
+                if wparam & 0xFFFF == 0:  # WA_INACTIVE
+                    self.hide()
+                return 0
+            elif msg == 0x0113:  # WM_TIMER
+                if wparam == self._timer_id:
+                    self._check_mouse_outside()
+                return 0
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._wnd_proc_ref = WNDPROC(wnd_proc)
@@ -225,7 +245,7 @@ class TrayMenu:
         wc = WNDCLASS()
         wc.lpfnWndProc = self._wnd_proc_ref
         wc.lpszClassName = self._class_name
-        wc.hbrBackground = gdi32.CreateSolidBrush(BG_BGR)
+        wc.hbrBackground = 0  # NULL - we handle all painting in WM_PAINT
         wc.cr = user32.LoadCursorW(0, 32512)
         user32.RegisterClassW(ctypes.byref(wc))
 
@@ -243,15 +263,18 @@ class TrayMenu:
             return
         self._ensure_class()
         h = self._calc_height()
-        ex = 0x00000008 | 0x00000080 | 0x08000000  # TOPMOST | TOOLWINDOW | NOACTIVATE
+        # TOPMOST | TOOLWINDOW | NOACTIVATE | LAYERED
+        ex = 0x00000008 | 0x00000080 | 0x08000000 | 0x00080000
         self._hwnd = user32.CreateWindowExW(
             ex, self._class_name, 'AgentBell', 0x80000000,
             0, 0, TRAY_MENU_W, h, 0, 0, 0, None,
         )
-        # Apply rounded corner region
+        # Apply rounded corner region (18px radius)
         rgn = gdi32.CreateRoundRectRgn(0, 0, TRAY_MENU_W + 1, h + 1,
                                         RADIUS_WINDOW * 2, RADIUS_WINDOW * 2)
         user32.SetWindowRgn(self._hwnd, rgn, True)
+        # Enable drop shadow
+        user32.SetLayeredWindowAttributes(self._hwnd, 0, 255, 0x00000002)  # LWA_ALPHA
 
     def show(self):
         """Show menu near cursor."""
@@ -273,11 +296,31 @@ class TrayMenu:
         user32.InvalidateRect(self._hwnd, None, True)
         user32.UpdateWindow(self._hwnd)
         self._visible = True
+        # Start mouse monitoring timer (check every 100ms)
+        user32.SetTimer(self._hwnd, self._timer_id, 100, None)
 
     def hide(self):
         if self._hwnd:
+            user32.KillTimer(self._hwnd, self._timer_id)
             user32.ShowWindow(self._hwnd, 0)
             self._visible = False
+
+    def _check_mouse_outside(self):
+        """Check if mouse is outside menu window, hide if so."""
+        if not self._visible or not self._hwnd:
+            return
+
+        point = ctypes.wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(point))
+
+        rc = _RECT()
+        user32.GetWindowRect(self._hwnd, ctypes.byref(rc))
+
+        # Check if mouse is outside menu bounds (with some tolerance)
+        tolerance = 10
+        if (point.x < rc.left - tolerance or point.x > rc.right + tolerance or
+            point.y < rc.top - tolerance or point.y > rc.bottom + tolerance):
+            self.hide()
 
     def toggle(self):
         if self._visible:
@@ -319,17 +362,24 @@ class TrayMenu:
         user32.GetClientRect(hwnd, ctypes.byref(rc))
         w, h = rc.right, rc.bottom
 
-        # Background
-        brush = gdi32.CreateSolidBrush(BG_BGR)
-        user32.FillRect(hdc, ctypes.byref(rc), brush)
-        gdi32.DeleteObject(brush)
+        # Background (solid dark color)
+        bg_brush = gdi32.CreateSolidBrush(BG_BGR)
+        user32.FillRect(hdc, ctypes.byref(rc), bg_brush)
+        gdi32.DeleteObject(bg_brush)
+
+        # Add subtle border
+        border_brush = gdi32.CreateSolidBrush(BORDER_BGR)
+        border_rect = _RECT(0, 0, w, 1)
+        user32.FillRect(hdc, ctypes.byref(border_rect), border_brush)
+        gdi32.DeleteObject(border_brush)
 
         # ── Brand Header ──────────────────────────────────────────────────────
-        # Orange >_ icon (28x28) + title + status dot
+        # Orange >_ icon (20x20) + title + status dot
+        NULL_PEN = 8
         icon_x = PADDING_PANEL
-        icon_y = PADDING_PANEL + 6
-        icon_size = 28
-        icon_r = 8
+        icon_y = PADDING_PANEL + 4
+        icon_size = 20
+        icon_r = 6
 
         # Draw orange rounded square
         icon_brush = gdi32.CreateSolidBrush(ORANGE_BGR)
@@ -343,7 +393,7 @@ class TrayMenu:
         # Draw white >_ text centered in icon
         gdi32.SetBkMode(hdc, TRANSPARENT)
         gdi32.SetTextColor(hdc, 0x00FFFFFF)  # white
-        icon_font = gdi32.CreateFontW(-13, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, 'Consolas')
+        icon_font = gdi32.CreateFontW(-9, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, 'Consolas')
         old_if = gdi32.SelectObject(hdc, icon_font)
         icon_rect = _RECT(icon_x, icon_y, icon_x + icon_size, icon_y + icon_size)
         user32.DrawTextW(hdc, ">_", -1, ctypes.byref(icon_rect), 0x0001 | 0x0004)
@@ -352,9 +402,9 @@ class TrayMenu:
 
         # Title text
         gdi32.SetTextColor(hdc, LIGHT_BGR)
-        header_font = gdi32.CreateFontW(-14, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+        header_font = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f = gdi32.SelectObject(hdc, header_font)
-        hr = _RECT(PADDING_PANEL + icon_size + 10, PADDING_PANEL + 8, w - PADDING_PANEL, PADDING_PANEL + 28)
+        hr = _RECT(PADDING_PANEL + icon_size + 8, PADDING_PANEL + 2, w - PADDING_PANEL, PADDING_PANEL + 22)
         user32.DrawTextW(hdc, "AgentBell", -1, ctypes.byref(hr), 0)
 
         # Status dot + label
@@ -363,17 +413,17 @@ class TrayMenu:
         dot_brush = gdi32.CreateSolidBrush(dot_color)
         old_b = gdi32.SelectObject(hdc, dot_brush)
         old_p = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
-        dot_x = PADDING_PANEL + icon_size + 10
-        dot_y = PADDING_PANEL + 34
-        gdi32.Ellipse(hdc, dot_x, dot_y, dot_x + 7, dot_y + 7)
+        dot_x = PADDING_PANEL + icon_size + 8
+        dot_y = PADDING_PANEL + 26
+        gdi32.Ellipse(hdc, dot_x, dot_y, dot_x + 6, dot_y + 6)
         gdi32.SelectObject(hdc, old_b)
         gdi32.SelectObject(hdc, old_p)
         gdi32.DeleteObject(dot_brush)
 
         gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-        status_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+        status_font = gdi32.CreateFontW(-9, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f2 = gdi32.SelectObject(hdc, status_font)
-        sr = _RECT(dot_x + 12, dot_y - 2, w - PADDING_PANEL, dot_y + 16)
+        sr = _RECT(dot_x + 10, dot_y - 1, w - PADDING_PANEL, dot_y + 14)
         if is_muted:
             remaining = int((self.daemon._muted_until - time.time()) / 60)
             status_text = f"已静音 · 剩余 {remaining} 分钟" if remaining > 0 else "已静音"
@@ -419,10 +469,11 @@ class TrayMenu:
                 gdi32.DeleteObject(hover_brush)
 
             # Icon (GDI drawn, not emoji)
-            icon_x = PADDING_PANEL + 8
-            icon_y_item = y + (ITEM_H_PANEL - 20) // 2
+            icon_size = 16
+            icon_x = PADDING_PANEL + 4
+            icon_y_item = y + (ITEM_H_PANEL - icon_size) // 2
             icon_color = ORANGE_BGR if is_hover else (MID_GRAY_BGR if not is_disabled else 0x00505050)
-            self._draw_item_icon(hdc, item, icon_x, icon_y_item, 20, icon_color)
+            self._draw_item_icon(hdc, item, icon_x, icon_y_item, icon_size, icon_color)
 
             # Label
             label = item["label"]
@@ -437,21 +488,21 @@ class TrayMenu:
             if is_hover and not is_disabled:
                 label_color = ORANGE_BGR
             gdi32.SetTextColor(hdc, label_color)
-            label_font = gdi32.CreateFontW(-13, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
+            label_font = gdi32.CreateFontW(-11, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
             old_f2 = gdi32.SelectObject(hdc, label_font)
-            lr = _RECT(PADDING_PANEL + 36, y, w - PADDING_PANEL - 10, y + ITEM_H_PANEL)
+            lr = _RECT(PADDING_PANEL + 26, y, w - PADDING_PANEL - 10, y + ITEM_H_PANEL)
             user32.DrawTextW(hdc, label, -1, ctypes.byref(lr), 0x0004)  # DT_VCENTER
             gdi32.SelectObject(hdc, old_f2)
             gdi32.DeleteObject(label_font)
 
-            # Badge (orange dot with count)
+            # Badge (red dot with count)
             if item.get("badge") and badge_count > 0:
                 badge_text = str(badge_count) if badge_count <= 9 else "9+"
                 badge_dot_size = 16
                 badge_x = w - PADDING_PANEL - 24
                 badge_y = y + (ITEM_H_PANEL - badge_dot_size) // 2
-                # Orange badge background
-                badge_brush = gdi32.CreateSolidBrush(ORANGE_BGR)
+                # Red badge background
+                badge_brush = gdi32.CreateSolidBrush(RED_BGR)
                 old_bb = gdi32.SelectObject(hdc, badge_brush)
                 old_bp = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
                 gdi32.Ellipse(hdc, badge_x, badge_y, badge_x + badge_dot_size, badge_y + badge_dot_size)

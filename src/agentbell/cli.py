@@ -27,8 +27,14 @@ def main():
 @main.command()
 def daemon():
     """Run AgentBell as a background daemon with tray icon."""
-    from agentbell.daemon import DaemonServer
+    from agentbell.daemon import DaemonServer, is_daemon_running
     from agentbell.tray import run_with_tray
+
+    # Check if daemon is already running
+    if is_daemon_running():
+        click.echo("AgentBell daemon is already running.", err=True)
+        click.echo("Use 'agentbell notify' to send notifications to the existing daemon.", err=True)
+        sys.exit(1)
 
     srv = DaemonServer()
     run_with_tray(srv)

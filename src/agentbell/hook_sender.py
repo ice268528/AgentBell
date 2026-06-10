@@ -23,7 +23,7 @@ def _start_daemon_if_needed() -> bool:
     if is_daemon_running():
         return True
 
-    # Try to start daemon
+    # Try to start daemon (using pythonw for no console window)
     try:
         python_dir = os.path.dirname(sys.executable)
         pythonw = os.path.join(python_dir, "pythonw.exe")
