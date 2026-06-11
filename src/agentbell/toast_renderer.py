@@ -271,7 +271,7 @@ def draw_orange_btn(hdc, x, y, w, text, rect_store):
     draw_text_centered(hdc, x, y, w, BTN_H, text, TEXT_PRIMARY, -12, 600)
     rect_store[:] = [x, y, x+w, y+BTN_H]
 
-def draw_header_and_body(hdc, content_w):
+def draw_header_and_body(hdc, content_w, content_h):
     """Wide layout: icon left, text center, buttons right."""
     S = SHADOW_EXTEND
     # Icon (large, left side)
@@ -325,12 +325,12 @@ def draw_header_and_body(hdc, content_w):
 def draw_compact(hdc, total_w, total_h):
     content_w, content_h = COMPACT_W, COMPACT_H
     draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h)
-    draw_header_and_body(hdc, content_w)
+    draw_header_and_body(hdc, content_w, content_h)
 
 def draw_expanded(hdc, total_w, total_h):
     content_w, content_h = EXPANDED_W, EXPANDED_H
     draw_shadow_and_bg(hdc, total_w, total_h, content_w, content_h)
-    draw_header_and_body(hdc, content_w)
+    draw_header_and_body(hdc, content_w, content_h)
     S = SHADOW_EXTEND
     dy = S + 80
     panel_w = content_w - PAD * 2
