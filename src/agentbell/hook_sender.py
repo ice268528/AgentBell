@@ -23,19 +23,36 @@ def _start_daemon_if_needed() -> bool:
     if is_daemon_running():
         return True
 
-    # Try to start daemon (using pythonw for no console window)
     try:
-        python_dir = os.path.dirname(sys.executable)
-        pythonw = os.path.join(python_dir, "pythonw.exe")
-        if not os.path.exists(pythonw):
-            pythonw = sys.executable
-
-        subprocess.Popen(
-            [pythonw, "-m", "agentbell", "daemon"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=0x08000000,  # CREATE_NO_WINDOW
-        )
+        if getattr(sys, 'frozen', False):
+            # Frozen exe: launch AgentBell.exe (GUI daemon) from same directory
+            exe_dir = os.path.dirname(sys.executable)
+            gui_exe = os.path.join(exe_dir, "AgentBell.exe")
+            if not os.path.exists(gui_exe):
+                # Fallback: check parent directory (CLI might be in AgentBell/ subfolder)
+                gui_exe = os.path.join(os.path.dirname(exe_dir), "AgentBell.exe")
+            if os.path.exists(gui_exe):
+                subprocess.Popen(
+                    [gui_exe],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=0x08000000,  # CREATE_NO_WINDOW
+                )
+            else:
+                logger.error("AgentBell.exe not found near %s", exe_dir)
+                return False
+        else:
+            # Development: use pythonw to start daemon
+            python_dir = os.path.dirname(sys.executable)
+            pythonw = os.path.join(python_dir, "pythonw.exe")
+            if not os.path.exists(pythonw):
+                pythonw = sys.executable
+            subprocess.Popen(
+                [pythonw, "-m", "agentbell", "daemon"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=0x08000000,
+            )
     except Exception as e:
         logger.error("Failed to start daemon: %s", e)
         return False
