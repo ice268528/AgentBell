@@ -648,7 +648,12 @@ def show_toast(
     python_dir = os.path.dirname(sys.executable)
     pythonw = os.path.join(python_dir, "pythonw.exe")
     if not os.path.exists(pythonw):
-        pythonw = sys.executable
+        # Frozen exe: find real Python in PATH or common locations
+        import shutil
+        pythonw = shutil.which("pythonw.exe") or shutil.which("pythonw")
+    if not pythonw or not os.path.exists(pythonw):
+        # Last resort: try python (will show console briefly)
+        pythonw = shutil.which("python.exe") or shutil.which("python") or sys.executable
 
     try:
         proc = subprocess.Popen(
