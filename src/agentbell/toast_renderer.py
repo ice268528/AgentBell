@@ -215,7 +215,7 @@ def draw_text_centered(hdc, x, y, w, h, text, color, font_size, weight):
     f = gdi32.CreateFontW(font_size, 0, 0, 0, weight, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
     o = gdi32.SelectObject(hdc, f)
     r = RECT(x, y, x+w, y+h)
-    user32.DrawTextW(hdc, text, -1, ctypes.byref(r), DT_CENTER | DT_VCENTER)
+    user32.DrawTextW(hdc, text, -1, ctypes.byref(r), DT_CENTER | DT_VCENTER | DT_SINGLELINE)
     gdi32.SelectObject(hdc, o)
     gdi32.DeleteObject(f)
 
