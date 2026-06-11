@@ -23,13 +23,6 @@ from agentbell.tray import run_with_tray
 
 def main():
     if is_daemon_running():
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            "AgentBell 已经在运行中。\n请检查系统托盘。",
-            "AgentBell",
-            0x40,
-        )
         sys.exit(0)
 
     srv = DaemonServer()
