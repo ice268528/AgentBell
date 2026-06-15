@@ -22,6 +22,13 @@ from agentbell.tray import run_with_tray
 
 
 def main():
+    # Toast daemon mode (started by toast_pipe_client)
+    if "--toast-daemon" in sys.argv:
+        from agentbell.toast_daemon import run_toast_daemon
+        run_toast_daemon()
+        return
+
+    # Main daemon mode
     if is_daemon_running():
         sys.exit(0)
 

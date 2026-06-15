@@ -47,6 +47,13 @@ def hook_sender():
     sender_main()
 
 
+@main.command("toast-daemon")
+def toast_daemon():
+    """Run persistent toast daemon (used internally by pipe client)."""
+    from agentbell.toast_daemon import run_toast_daemon
+    run_toast_daemon()
+
+
 @main.command()
 @click.option("--title", required=True, help="Notification title")
 @click.option("--message", required=True, help="Notification body text")

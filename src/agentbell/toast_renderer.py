@@ -533,38 +533,12 @@ def _unregister_toast(marker_path: str) -> None:
         pass
 
 
-def show_toast(
+def _build_toast_params(
     event: ClaudeHookToastEvent,
-    config: AgentBellConfig | None = None,
+    config: AgentBellConfig,
     session_label: str = "",
-    duration: int = 12,
-) -> None:
-    """Show a toast notification."""
-    cfg = config or AgentBellConfig()
-    logger.info("Showing toast: type=%r, title=%r, session=%r", event.type, event.title, session_label)
-    _log_event(event)
-
-    _cleanup_old_toasts()
-    for f in os.listdir(_TOAST_DIR):
-        if f.endswith(".toast"):
-            marker = os.path.join(_TOAST_DIR, f)
-            try:
-                mtime = os.path.getmtime(marker)
-                if time.time() - mtime < cfg.dedupe_window_ms / 1000:
-                    if event.type in f:
-                        logger.info("Dedup: skipping %s", event.type)
-                        return
-            except OSError:
-                pass
-
-    active = _get_active_toast_count()
-    if active >= cfg.max_visible_toasts:
-        # 关闭最旧的 toast，为新 toast 腾出空间
-        _dismiss_oldest_toast()
-
-    toast_id = f"{event.type}_{event.id}"
-    marker_path = _register_toast(toast_id)
-
+) -> dict:
+    """Build toast parameters dict from event."""
     # Resolve display values
     is_done = event.type == "task_done"
     is_error = event.type == "error"
@@ -621,26 +595,100 @@ def show_toast(
     project_path = event.project_path or ""
     has_detail = bool(tool_name or command or project_path)
 
+    return {
+        "id": f"{event.type}_{event.id}",
+        "type": event.type,
+        "title": title,
+        "message": desc,
+        "eyebrow": eyebrow,
+        "icon_symbol": icon_symbol,
+        "accent_bgr": accent_bgr,
+        "icon_bg_bgr": icon_bg_bgr,
+        "has_detail": has_detail,
+        "session_label": session_label,
+        "tool_name": tool_name,
+        "command": command,
+        "project_path": project_path,
+        "dismiss_ms": config.toast_dismiss_ms if hasattr(config, 'toast_dismiss_ms') else TOAST_DISMISS_MS,
+    }
+
+
+def show_toast(
+    event: ClaudeHookToastEvent,
+    config: AgentBellConfig | None = None,
+    session_label: str = "",
+    duration: int = 12,
+) -> None:
+    """Show a toast notification.
+
+    Tries the persistent daemon via named pipe first (~1ms latency).
+    Falls back to subprocess mode if daemon is unavailable (~50ms).
+    """
+    cfg = config or AgentBellConfig()
+    logger.info("Showing toast: type=%r, title=%r, session=%r", event.type, event.title, session_label)
+    _log_event(event)
+
+    _cleanup_old_toasts()
+    for f in os.listdir(_TOAST_DIR):
+        if f.endswith(".toast"):
+            marker = os.path.join(_TOAST_DIR, f)
+            try:
+                mtime = os.path.getmtime(marker)
+                if time.time() - mtime < cfg.dedupe_window_ms / 1000:
+                    if event.type in f:
+                        logger.info("Dedup: skipping %s", event.type)
+                        return
+            except OSError:
+                pass
+
+    active = _get_active_toast_count()
+    if active >= cfg.max_visible_toasts:
+        _dismiss_oldest_toast()
+
+    toast_id = f"{event.type}_{event.id}"
+    marker_path = _register_toast(toast_id)
+
+    # Build params
+    params = _build_toast_params(event, cfg, session_label)
+
+    # Try pipe client first (fast path)
+    try:
+        from agentbell.toast_pipe_client import send_toast
+        if send_toast(params):
+            logger.info("Toast sent via pipe: %s", toast_id)
+            # Schedule marker cleanup
+            def _cleanup_marker():
+                time.sleep(duration + 2)
+                _unregister_toast(marker_path)
+            threading.Thread(target=_cleanup_marker, daemon=True).start()
+            return
+    except Exception as e:
+        logger.warning("Pipe client failed, falling back to subprocess: %s", e)
+
+    # Fallback: legacy subprocess mode
+    _show_toast_subprocess(params, marker_path, duration)
+
+
+def _show_toast_subprocess(params: dict, marker_path: str, duration: int) -> None:
+    """Legacy subprocess-based toast (fallback)."""
     script = _generate_toast_script(
-        title=title,
-        desc=desc,
-        eyebrow=eyebrow,
-        icon_symbol=icon_symbol,
-        accent_bgr=accent_bgr,
-        icon_bg_bgr=icon_bg_bgr,
-        has_detail=has_detail,
-        session_label=session_label,
-        tool_name=tool_name,
-        command=command,
-        project_path=project_path,
-        dismiss_ms=cfg.toast_dismiss_ms if hasattr(cfg, 'toast_dismiss_ms') else TOAST_DISMISS_MS,
+        title=params["title"],
+        desc=params.get("message", ""),
+        eyebrow=params.get("eyebrow", "通知"),
+        icon_symbol=params.get("icon_symbol", ">_"),
+        accent_bgr=params.get("accent_bgr", _ACCENT),
+        icon_bg_bgr=params.get("icon_bg_bgr", _ORANGE_ICON_BG),
+        has_detail=params.get("has_detail", False),
+        session_label=params.get("session_label", ""),
+        tool_name=params.get("tool_name", ""),
+        command=params.get("command", ""),
+        project_path=params.get("project_path", ""),
+        dismiss_ms=params.get("dismiss_ms", TOAST_DISMISS_MS),
     )
 
-    y_offset = active * (228 + 8)  # COMPACT_H(180) + SHADOW_EXTEND*2(48) + gap
-    script = script.replace(
-        "sh - th - 60",
-        f"sh - th - 60 - {y_offset}"
-    )
+    active = _get_active_toast_count()
+    y_offset = active * (228 + 8)
+    script = script.replace("sh - th - 60", f"sh - th - 60 - {y_offset}")
 
     script_path = os.path.join(tempfile.gettempdir(), f"agentbell_toast_{uuid.uuid4().hex[:8]}.py")
     with open(script_path, "w", encoding="utf-8") as f:
@@ -649,11 +697,9 @@ def show_toast(
     python_dir = os.path.dirname(sys.executable)
     pythonw = os.path.join(python_dir, "pythonw.exe")
     if not os.path.exists(pythonw):
-        # Frozen exe: find real Python in PATH or common locations
         import shutil
         pythonw = shutil.which("pythonw.exe") or shutil.which("pythonw")
     if not pythonw or not os.path.exists(pythonw):
-        # Last resort: try python (will show console briefly)
         pythonw = shutil.which("python.exe") or shutil.which("python") or sys.executable
 
     try:
@@ -661,12 +707,11 @@ def show_toast(
             [pythonw, script_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            creationflags=0x08000000,  # CREATE_NO_WINDOW
+            creationflags=0x08000000,
         )
-        logger.info("Toast launched: pid=%s, script=%s", proc.pid, os.path.basename(script_path))
+        logger.info("Toast launched (subprocess): pid=%s", proc.pid)
     except Exception as e:
         logger.error("Failed to launch toast with %s: %s", pythonw, e)
-        # Fallback: try sys.executable directly
         try:
             proc = subprocess.Popen(
                 [sys.executable, script_path],
@@ -677,11 +722,11 @@ def show_toast(
             logger.info("Toast launched via fallback: pid=%s", proc.pid)
         except Exception as e2:
             logger.error("Fallback also failed: %s", e2)
+            proc = None
 
     def cleanup():
         time.sleep(duration + 2)
         try:
-            # Check if subprocess had errors
             if proc and proc.poll() is not None:
                 stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
                 if stderr:
