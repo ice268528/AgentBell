@@ -23,7 +23,7 @@ def _get_agentbell_command() -> tuple[str, list[str]]:
     """Return (command, base_args) for invoking agentbell.
 
     Priority:
-    1. Frozen exe: AgentBellCLI.exe next to the running executable
+    1. Frozen exe: AgentBell.exe (supports CLI mode)
     2. agentbell on PATH (e.g. via uv tool install)
     3. .venv/Scripts/agentbell.exe in the project directory (uv sync)
     4. uv run agentbell as fallback
@@ -33,10 +33,8 @@ def _get_agentbell_command() -> tuple[str, list[str]]:
 
     # 1. Check if running as frozen exe
     if getattr(sys, 'frozen', False):
-        exe_dir = Path(sys.executable).parent
-        cli_exe = exe_dir / "AgentBellCLI.exe"
-        if cli_exe.exists():
-            return (str(cli_exe), [])
+        # Use the current executable (AgentBell.exe supports CLI mode)
+        return (str(sys.executable), [])
 
     # 2. Check PATH
     found = _shutil.which("agentbell")
