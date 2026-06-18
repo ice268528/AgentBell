@@ -28,7 +28,7 @@ from agentbell.theme import (
 logger = logging.getLogger("agentbell.toast_daemon")
 
 # ── Pipe constants ───────────────────────────────────────────────────────────
-PIPE_NAME = "\\\\.\\pipe\\agentbell_toast"
+PIPE_NAME = chr(92)*2 + "." + chr(92) + "pipe" + chr(92) + "agentbell_toast"
 PIPE_BUFFER_SIZE = 4096
 PIPE_MAX_INSTANCES = 1
 
@@ -138,6 +138,7 @@ user32.DefWindowProcW.restype = LRESULT
 _hwnd_map: dict[int, "ToastWindow"] = {}
 _window_class_registered = False
 _window_class_name = "ClaudeToastDaemon"
+_global_wnd_proc_ref = None  # Keep reference to prevent garbage collection
 
 
 # ── Win32 structures ─────────────────────────────────────────────────────────
@@ -330,9 +331,12 @@ class ToastWindow:
             self.on_destroyed(self.toast_id)
 
     def _register_class(self):
+        global _global_wnd_proc_ref
+        _global_wnd_proc_ref = WNDPROC(_global_wnd_proc)  # Keep reference
+
         wc = WNDCLASSW()
         wc.style = 0
-        wc.lpfnWndProc = WNDPROC(_global_wnd_proc)
+        wc.lpfnWndProc = _global_wnd_proc_ref
         wc.cbClsExtra = 0
         wc.cbWndExtra = 0
         wc.hInstance = 0

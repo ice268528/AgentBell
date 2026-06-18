@@ -15,7 +15,7 @@ import time
 logger = logging.getLogger("agentbell.toast_pipe_client")
 
 # ── Pipe constants ───────────────────────────────────────────────────────────
-PIPE_NAME = "\\\\.\\pipe\\agentbell_toast"
+PIPE_NAME = chr(92)*2 + "." + chr(92) + "pipe" + chr(92) + "agentbell_toast"
 INVALID_HANDLE_VALUE = -1
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
