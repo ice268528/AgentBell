@@ -1,6 +1,7 @@
 """AgentBell entry point for PyInstaller build.
 
 Runs the daemon with tray icon. No console window.
+Supports CLI mode when called with arguments.
 """
 
 import sys
@@ -17,11 +18,21 @@ else:
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)
 
-from agentbell.daemon import DaemonServer, is_daemon_running
-from agentbell.tray import run_with_tray
-
 
 def main():
+    # Check if called with CLI arguments (e.g., "AgentBell.exe hook-sender")
+    # If called without arguments, start GUI mode
+    if len(sys.argv) > 1:
+        # CLI mode - import and run CLI
+        from agentbell.cli import main as cli_main
+        cli_main()
+        return
+
+    # GUI mode - check if daemon is already running
+    from agentbell.daemon import is_daemon_running
+    from agentbell.tray import run_with_tray
+    from agentbell.daemon import DaemonServer
+
     # Toast daemon mode (started by toast_pipe_client)
     if "--toast-daemon" in sys.argv:
         from agentbell.toast_daemon import run_toast_daemon
