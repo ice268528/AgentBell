@@ -170,19 +170,19 @@ class AllEventsWindow:
 
         self._wnd_proc_ref = WNDPROC(wnd_proc)
 
-        wc = ctypes.cast(ctypes.create_string_buffer(ctypes.sizeof(ctypes.wintypes.WNDCLASSW)),
-                         ctypes.POINTER(ctypes.wintypes.WNDCLASSW))
-        wc.contents.style = 0
-        wc.contents.lpfnWndProc = self._wnd_proc_ref
-        wc.contents.cbClsExtra = 0
-        wc.contents.cbWndExtra = 0
-        wc.contents.hInstance = 0
-        wc.contents.hIcon = 0
-        wc.contents.hCursor = user32.LoadCursorW(0, 32512)
-        wc.contents.hbrBackground = gdi32.CreateSolidBrush(BG_BGR)
-        wc.contents.lpszMenuName = None
-        wc.contents.lpszClassName = self._class_name
-        user32.RegisterClassW(wc)
+        class WNDCLASS(ctypes.Structure):
+            _fields_ = [('style', ctypes.c_uint), ('lpfnWndProc', WNDPROC),
+                        ('cbClsExtra', ctypes.c_int), ('cbWndExtra', ctypes.c_int),
+                        ('hInstance', ctypes.wintypes.HINSTANCE), ('hIcon', ctypes.wintypes.HICON),
+                        ('hCursor', ctypes.wintypes.HANDLE), ('hbrBackground', ctypes.wintypes.HANDLE),
+                        ('lpszMenuName', ctypes.wintypes.LPCWSTR), ('lpszClassName', ctypes.wintypes.LPCWSTR)]
+
+        wc = WNDCLASS()
+        wc.lpfnWndProc = self._wnd_proc_ref
+        wc.lpszClassName = self._class_name
+        wc.hbrBackground = gdi32.CreateSolidBrush(BG_BGR)
+        wc.hCursor = user32.LoadCursorW(0, 32512)
+        user32.RegisterClassW(ctypes.byref(wc))
 
     def _create_window(self):
         """Create the window if it doesn't exist."""
