@@ -9,23 +9,24 @@ Windows 系统托盘通知工具，为 Claude Code CLI 提供桌面通知、状�
 - **系统托盘常驻**：橙色 >_ 图标常驻托盘，实时显示运行状态
 - **Toast 弹窗通知**：授权提醒、等待输入、任务完成、错误通知四种类型
 - **最近事件面板**：左键点击托盘图标查看最近 20 条事件记录
+- **全部事件窗口**：点击"查看全部"按钮查看所有历史事件，支持滚动浏览
 - **右键菜单**：最近事件、静音 30 分钟、设置、关于、重启、退出
 - **设置管理**：一键安装/卸载 Claude Code hooks，可视化编辑 settings.json
 - **配置状态检测**：自动检测 hooks 配置状态，未配置时显示红色"待配置"
 - **多会话聚合**：多个 Claude Code 会话同时触发时合并通知
+- **持久化进程**：toast daemon 常驻后台，后续 toast 延迟仅 ~1ms
 - **暗色主题 UI**：Claude/Anthropic 暖色系设计语言，圆角暗色面板
 
 ## 快速开始（推荐）
 
 ### 1. 下载
 
-从 [GitHub Release](https://github.com/ice268528/AgentBell/releases/tag/v1.0.0) 下载 `AgentBell-v1.0.0-win64.zip`，解压到任意目录。
+从 [GitHub Release](https://github.com/ice268528/AgentBell/releases/tag/v1.1.0) 下载 `AgentBell.zip`，解压到任意目录。
 
 解压后目录结构：
 ```
 AgentBell/
-├── AgentBell.exe        ← 主程序（托盘守护进程）
-├── AgentBellCLI.exe     ← 命令行工具
+├── AgentBell.exe        ← 主程序（支持 GUI 和 CLI 模式）
 └── _internal/           ← 依赖文件（不要删除）
 ```
 
@@ -51,7 +52,7 @@ AgentBell/
 
 右键菜单 → 设置 → 命令行运行：
 ```bash
-AgentBellCLI.exe test
+AgentBell.exe test
 ```
 看到 Toast 弹窗并听到提示音即表示工作正常。
 
@@ -78,13 +79,13 @@ uv run agentbell test
 
 | 命令 | 说明 |
 |------|------|
-| `AgentBellCLI.exe daemon` | 启动托盘守护进程 |
-| `AgentBellCLI.exe test` | 发送测试通知 |
-| `AgentBellCLI.exe test --style done` | 测试完成风格 |
-| `AgentBellCLI.exe test --style error` | 测试错误风格 |
-| `AgentBellCLI.exe test --style waiting_input` | 测试等待输入风格 |
-| `AgentBellCLI.exe install-claude-hooks` | 安装 Claude Code hooks |
-| `AgentBellCLI.exe uninstall-claude-hooks` | 卸载 Claude Code hooks |
+| `AgentBell.exe daemon` | 启动托盘守护进程 |
+| `AgentBell.exe test` | 发送测试通知 |
+| `AgentBell.exe test --style done` | 测试完成风格 |
+| `AgentBell.exe test --style error` | 测试错误风格 |
+| `AgentBell.exe test --style waiting_input` | 测试等待输入风格 |
+| `AgentBell.exe install-claude-hooks` | 安装 Claude Code hooks |
+| `AgentBell.exe uninstall-claude-hooks` | 卸载 Claude Code hooks |
 
 ## 托盘菜单
 
@@ -128,7 +129,9 @@ AgentBell/
 │   ├── cli.py               # CLI 命令（click）
 │   ├── daemon.py            # HTTP 服务 + 事件路由
 │   ├── tray.py              # 系统托盘图标
-│   ├── toast_renderer.py    # Toast 弹窗渲染
+│   ├── toast_renderer.py    # Toast 弹窗渲染（客户端）
+│   ├── toast_daemon.py      # Toast 持久化进程（服务端）
+│   ├── toast_pipe_client.py # Named Pipe 客户端
 │   ├── event_store.py       # 事件持久化存储
 │   ├── hook_sender.py       # Claude Code hook 转发器
 │   ├── claude_hooks.py      # hooks 安装/卸载
@@ -136,6 +139,7 @@ AgentBell/
 │   └── ui/
 │       ├── tray_menu.py     # 右键菜单面板
 │       ├── recent_events_window.py  # 最近事件窗口
+│       ├── all_events_window.py     # 全部事件窗口（滚动浏览）
 │       ├── settings_window.py       # 设置/关于窗口
 │       ├── icons.py         # 托盘图标生成
 │       └── theme.py         # UI 常量和颜色

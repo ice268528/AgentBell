@@ -1,8 +1,7 @@
-"""Productized dark Recent Events window for AgentBell.
+"""All Events window for AgentBell.
 
-Shows event cards with status dots, session labels, timestamps.
-Uses Claude/Anthropic warm-dark theme with large rounded corners,
-dark gradient background, and dynamic card hover effects.
+Shows all events from the event store with scroll support.
+Uses Claude/Anthropic warm-dark theme.
 """
 
 import ctypes
@@ -19,11 +18,9 @@ from agentbell.ui.theme import (
     GRADIENT_DARK_BGR, GRADIENT_MID_BGR,
     ORANGE_HOVER_BGR,
     RADIUS_WINDOW, RADIUS_CARD, RADIUS_BUTTON,
-    RECENT_EVENTS_W, RECENT_EVENTS_H, RECENT_EVENTS_MIN_H,
     STATE_LABELS, STATUS_BGR,
     FONT_FAMILY,
 )
-from agentbell.ui.settings_window import _check_hooks_configured
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -38,6 +35,21 @@ DT_RIGHT = 2
 DT_VCENTER = 4
 DT_SINGLELINE = 0x20
 
+# Scrollbar constants
+WM_VSCROLL = 0x0115
+WM_MOUSEWHEEL = 0x020A
+SB_LINEUP = 0
+SB_LINEDOWN = 1
+SB_PAGEUP = 2
+SB_PAGEDOWN = 3
+SB_THUMBPOSITION = 4
+SB_THUMBTRACK = 5
+SB_ENDSCROLL = 8
+SIF_RANGE = 0x0001
+SIF_PAGE = 0x0002
+SIF_POS = 0x0004
+SIF_ALL = SIF_RANGE | SIF_PAGE | SIF_POS
+
 
 class _PS(ctypes.Structure):
     _fields_ = [('hdc', ctypes.wintypes.HDC), ('fErase', ctypes.wintypes.BOOL),
@@ -50,26 +62,33 @@ class _RECT(ctypes.Structure):
                 ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
 
 
-class RecentEventsWindow:
-    """Productized dark recent events window."""
+class SCROLLINFO(ctypes.Structure):
+    _fields_ = [
+        ('cbSize', ctypes.c_uint),
+        ('fMask', ctypes.c_uint),
+        ('nMin', ctypes.c_int),
+        ('nMax', ctypes.c_int),
+        ('nPage', ctypes.c_uint),
+        ('nPos', ctypes.c_int),
+        ('nTrackPos', ctypes.c_int),
+    ]
 
-    def __init__(self, daemon, settings_window=None):
-        self.daemon = daemon
-        self._settings_window = settings_window
-        self._all_events_window = None
+
+class AllEventsWindow:
+    """All events window with scroll support."""
+
+    def __init__(self, event_store):
+        self.event_store = event_store
         self._hwnd = None
         self._visible = False
         self._wnd_proc_ref = None
         self._close_rect = [0, 0, 0, 0]
-        self._card_rects = []  # [(y_top, y_bottom, session_id), ...]
-        self._view_all_rect = [0, 0, 0, 0]
-        self._settings_rect = [0, 0, 0, 0]
-        self._hover_card_idx = -1  # index of hovered card
-        self._class_name = "AgentBellRecentEvents"
-
-    def set_all_events_window(self, window):
-        """Set the all events window reference."""
-        self._all_events_window = window
+        self._back_rect = [0, 0, 0, 0]
+        self._clear_rect = [0, 0, 0, 0]
+        self._card_rects = []
+        self._hover_card_idx = -1
+        self._scroll_pos = 0
+        self._class_name = "AgentBellAllEvents"
 
     def _ensure_class(self):
         """Register window class."""
@@ -82,23 +101,45 @@ class RecentEventsWindow:
                 return 0
             elif msg == 0x0014:  # WM_ERASEBKGND
                 return 1
+            elif msg == WM_MOUSEWHEEL:
+                # Handle mouse wheel scroll
+                delta = ctypes.c_short((wparam >> 16) & 0xFFFF).value
+                if delta > 0:
+                    self._scroll_up(3)
+                else:
+                    self._scroll_down(3)
+                user32.InvalidateRect(hwnd, None, True)
+                return 0
+            elif msg == WM_VSCROLL:
+                # Handle scrollbar
+                event = wparam & 0xFFFF
+                if event == SB_LINEUP:
+                    self._scroll_up(1)
+                elif event == SB_LINEDOWN:
+                    self._scroll_down(1)
+                elif event == SB_PAGEUP:
+                    self._scroll_up(5)
+                elif event == SB_PAGEDOWN:
+                    self._scroll_down(5)
+                elif event == SB_THUMBTRACK or event == SB_THUMBPOSITION:
+                    pos = (wparam >> 16) & 0xFFFF
+                    self._scroll_to(pos)
+                user32.InvalidateRect(hwnd, None, True)
+                return 0
             elif msg == 0x0201:  # WM_LBUTTONDOWN
                 x = lparam & 0xFFFF
                 y = (lparam >> 16) & 0xFFFF
                 if self._hit_test(x, y, self._close_rect):
                     self.hide()
                     return 0
-                if self._hit_test(x, y, self._view_all_rect):
-                    if self._all_events_window:
-                        self._all_events_window.show()
+                if self._hit_test(x, y, self._back_rect):
+                    self.hide()
                     return 0
-                if self._hit_test(x, y, self._settings_rect):
-                    if self._settings_window:
-                        self._settings_window.show()
+                if self._hit_test(x, y, self._clear_rect):
+                    self.event_store.clear()
+                    self._scroll_pos = 0
+                    user32.InvalidateRect(hwnd, None, True)
                     return 0
-                for card_top, card_bottom, session_id in self._card_rects:
-                    if card_top <= y <= card_bottom:
-                        pass
                 return 0
             elif msg == 0x0200:  # WM_MOUSEMOVE
                 x = lparam & 0xFFFF
@@ -112,8 +153,8 @@ class RecentEventsWindow:
                 if self._hover_card_idx != old_hover:
                     user32.InvalidateRect(hwnd, None, True)
                 in_btn = (self._hit_test(x, y, self._close_rect) or
-                          self._hit_test(x, y, self._view_all_rect) or
-                          self._hit_test(x, y, self._settings_rect) or
+                          self._hit_test(x, y, self._back_rect) or
+                          self._hit_test(x, y, self._clear_rect) or
                           self._hover_card_idx >= 0)
                 IDC_ARROW = 32512
                 IDC_HAND = 32649
@@ -122,72 +163,64 @@ class RecentEventsWindow:
             elif msg == 0x0020:  # WM_SETCURSOR
                 user32.SetCursor(user32.LoadCursorW(0, 32512))
                 return 1
-            elif msg == 0x0008:  # WM_KILLFOCUS
-                self.hide()
-                return 0
             elif msg == 0x0002:  # WM_DESTROY
+                self._visible = False
                 return 0
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._wnd_proc_ref = WNDPROC(wnd_proc)
 
-        class WNDCLASS(ctypes.Structure):
-            _fields_ = [('style', ctypes.c_uint), ('lpfnWndProc', WNDPROC),
-                        ('cbClsExtra', ctypes.c_int), ('cbWndExtra', ctypes.c_int),
-                        ('hInstance', ctypes.wintypes.HINSTANCE), ('hIcon', ctypes.wintypes.HICON),
-                        ('hCursor', ctypes.wintypes.HANDLE), ('hbrBackground', ctypes.wintypes.HANDLE),
-                        ('lpszMenuName', ctypes.wintypes.LPCWSTR), ('lpszClassName', ctypes.wintypes.LPCWSTR)]
-
-        wc = WNDCLASS()
-        wc.lpfnWndProc = self._wnd_proc_ref
-        wc.lpszClassName = self._class_name
-        wc.hbrBackground = gdi32.CreateSolidBrush(DARK_BGR)
-        wc.cr = user32.LoadCursorW(0, 32512)
-        user32.RegisterClassW(ctypes.byref(wc))
+        wc = ctypes.cast(ctypes.create_string_buffer(ctypes.sizeof(ctypes.wintypes.WNDCLASSW)),
+                         ctypes.POINTER(ctypes.wintypes.WNDCLASSW))
+        wc.contents.style = 0
+        wc.contents.lpfnWndProc = self._wnd_proc_ref
+        wc.contents.cbClsExtra = 0
+        wc.contents.cbWndExtra = 0
+        wc.contents.hInstance = 0
+        wc.contents.hIcon = 0
+        wc.contents.hCursor = user32.LoadCursorW(0, 32512)
+        wc.contents.hbrBackground = gdi32.CreateSolidBrush(BG_BGR)
+        wc.contents.lpszMenuName = None
+        wc.contents.lpszClassName = self._class_name
+        user32.RegisterClassW(wc)
 
     def _create_window(self):
-        """Create the window if not exists."""
+        """Create the window if it doesn't exist."""
         if self._hwnd:
             return
         self._ensure_class()
 
+        w, h = 480, 600
         sw = user32.GetSystemMetrics(0)
         sh = user32.GetSystemMetrics(1)
-        x = sw - RECENT_EVENTS_W - 24
-        y = sh - RECENT_EVENTS_H - 60
+        x = sw - w - 24
+        y = sh - h - 60
 
         ex = 0x00000008 | 0x00000080 | 0x08000000  # TOPMOST | TOOLWINDOW | NOACTIVATE
         self._hwnd = user32.CreateWindowExW(
-            ex, self._class_name, 'AgentBell', 0x80000000,  # WS_POPUP
-            x, y, RECENT_EVENTS_W, RECENT_EVENTS_H, 0, 0, 0, None,
+            ex, self._class_name, 'AgentBell - 全部事件', 0x80000000,  # WS_POPUP
+            x, y, w, h, 0, 0, 0, None,
         )
 
         # Apply rounded corner region
-        rgn = gdi32.CreateRoundRectRgn(0, 0, RECENT_EVENTS_W + 1, RECENT_EVENTS_H + 1,
+        rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1,
                                         RADIUS_WINDOW * 2, RADIUS_WINDOW * 2)
         user32.SetWindowRgn(self._hwnd, rgn, True)
 
     def show(self):
         """Show the window."""
         self._create_window()
-        events = self.daemon.event_store.get_recent(20)
-        card_h = 78
-        card_gap = 8
-        content_h = max(0, len(events)) * (card_h + card_gap)
-        h = max(RECENT_EVENTS_MIN_H, min(600, 120 + content_h + 60))
+        self._scroll_pos = 0
 
+        w, h = 480, 600
         sw = user32.GetSystemMetrics(0)
         sh = user32.GetSystemMetrics(1)
-        x = sw - RECENT_EVENTS_W - 24
+        x = sw - w - 24
         y = sh - h - 60
 
-        rgn = gdi32.CreateRoundRectRgn(0, 0, RECENT_EVENTS_W + 1, h + 1,
-                                        RADIUS_WINDOW * 2, RADIUS_WINDOW * 2)
-        user32.SetWindowRgn(self._hwnd, rgn, True)
-
-        user32.MoveWindow(self._hwnd, x, y, RECENT_EVENTS_W, h, True)
+        user32.MoveWindow(self._hwnd, x, y, w, h, True)
         user32.ShowWindow(self._hwnd, 5)
-        user32.SetWindowPos(self._hwnd, -1, x, y, RECENT_EVENTS_W, h, 0x0010 | 0x0040)
+        user32.SetWindowPos(self._hwnd, -1, x, y, w, h, 0x0010 | 0x0040)
         user32.UpdateWindow(self._hwnd)
         user32.InvalidateRect(self._hwnd, None, True)
         self._visible = True
@@ -197,11 +230,18 @@ class RecentEventsWindow:
             user32.ShowWindow(self._hwnd, 0)
             self._visible = False
 
-    def toggle(self):
-        if self._visible:
-            self.hide()
-        else:
-            self.show()
+    def _scroll_up(self, lines=1):
+        self._scroll_pos = max(0, self._scroll_pos - lines)
+
+    def _scroll_down(self, lines=1):
+        events = self.event_store.get_all()
+        max_scroll = max(0, len(events) - 5)
+        self._scroll_pos = min(max_scroll, self._scroll_pos + lines)
+
+    def _scroll_to(self, pos):
+        events = self.event_store.get_all()
+        max_scroll = max(0, len(events) - 5)
+        self._scroll_pos = min(max_scroll, max(0, pos))
 
     @staticmethod
     def _hit_test(x, y, rect):
@@ -223,12 +263,11 @@ class RecentEventsWindow:
             gdi32.DeleteObject(pen)
 
     def _draw_gradient_bg(self, hdc, w, h):
-        """Draw vertical dark gradient background (top: darker, bottom: lighter)."""
+        """Draw vertical dark gradient background."""
         steps = min(h, 64)
         step_h = max(1, h // steps)
         for i in range(steps):
             t = i / max(1, steps - 1)
-            # Interpolate between GRADIENT_DARK_BGR and GRADIENT_MID_BGR
             r1 = GRADIENT_DARK_BGR & 0xFF
             g1 = (GRADIENT_DARK_BGR >> 8) & 0xFF
             b1 = (GRADIENT_DARK_BGR >> 16) & 0xFF
@@ -253,10 +292,10 @@ class RecentEventsWindow:
 
         PAD = 16
 
-        # ── Gradient background ───────────────────────────────────────────────
+        # Gradient background
         self._draw_gradient_bg(hdc, w, h)
 
-        # ── Window border (subtle) ────────────────────────────────────────────
+        # Window border
         border_pen = gdi32.CreatePen(1, 1, BORDER_BGR)
         old_bp = gdi32.SelectObject(hdc, border_pen)
         old_bb = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
@@ -267,12 +306,12 @@ class RecentEventsWindow:
 
         gdi32.SetBkMode(hdc, TRANSPARENT)
 
-        # ── Header ────────────────────────────────────────────────────────────
+        # Header
         gdi32.SetTextColor(hdc, LIGHT_BGR)
         title_font = gdi32.CreateFontW(-16, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f = gdi32.SelectObject(hdc, title_font)
-        tr = _RECT(PAD, PAD, w - 30, PAD + 20)
-        user32.DrawTextW(hdc, "AgentBell 最近事件", -1, ctypes.byref(tr), DT_LEFT | DT_VCENTER)
+        tr = _RECT(PAD, PAD, w - 60, PAD + 20)
+        user32.DrawTextW(hdc, "全部事件", -1, ctypes.byref(tr), DT_LEFT | DT_VCENTER)
         gdi32.SelectObject(hdc, old_f)
         gdi32.DeleteObject(title_font)
 
@@ -287,14 +326,11 @@ class RecentEventsWindow:
         gdi32.DeleteObject(close_font)
 
         # Subtitle
-        events = self.daemon.event_store.get_recent(20)
-        count = self.daemon.event_store.count()
+        events = self.event_store.get_all()
+        count = len(events)
         t = time.strftime("%H:%M")
-        is_cfg, cfg_detail = _check_hooks_configured()
-        status_word = "运行中" if is_cfg else "待配置"
-        subtitle = f"{status_word} · {count} 个事件 · {t}"
-        sub_color = RED_BGR if not is_cfg else MID_GRAY_BGR
-        gdi32.SetTextColor(hdc, sub_color)
+        subtitle = f"共 {count} 个事件 · {t}"
+        gdi32.SetTextColor(hdc, MID_GRAY_BGR)
         sub_font = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
         old_f = gdi32.SelectObject(hdc, sub_font)
         sr = _RECT(PAD, PAD + 22, w - 30, PAD + 36)
@@ -302,69 +338,40 @@ class RecentEventsWindow:
         gdi32.SelectObject(hdc, old_f)
         gdi32.DeleteObject(sub_font)
 
-        # ── Header separator ──────────────────────────────────────────────────
+        # Header separator
         sep_brush = gdi32.CreateSolidBrush(SEPARATOR_BGR)
         sep_rect = _RECT(PAD, PAD + 44, w - PAD, PAD + 45)
         user32.FillRect(hdc, ctypes.byref(sep_rect), sep_brush)
         gdi32.DeleteObject(sep_brush)
 
-        # ── Event Cards ───────────────────────────────────────────────────────
+        # Event Cards (with scroll)
         self._card_rects = []
         card_y = PAD + 52
         card_w = w - PAD * 2
         card_h = 78
         card_gap = 8
 
-        recent = events
-        if not recent:
+        # Apply scroll offset
+        start_idx = self._scroll_pos
+        visible_events = events[start_idx:]
+
+        if not events:
             # Empty state
-            bell_x = w // 2 - 20
-            bell_y = card_y + 16
-            bell_brush = gdi32.CreateSolidBrush(ORANGE_BGR)
-            old_bb = gdi32.SelectObject(hdc, bell_brush)
-            old_bp = gdi32.SelectObject(hdc, gdi32.GetStockObject(NULL_PEN))
-            gdi32.Ellipse(hdc, bell_x, bell_y, bell_x + 40, bell_y + 40)
-            gdi32.SelectObject(hdc, old_bb)
-            gdi32.SelectObject(hdc, old_bp)
-            gdi32.DeleteObject(bell_brush)
-
-            gdi32.SetTextColor(hdc, 0x00FFFFFF)
-            bell_font = gdi32.CreateFontW(-18, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-            old_bf = gdi32.SelectObject(hdc, bell_font)
-            bell_rect = _RECT(bell_x, bell_y, bell_x + 40, bell_y + 40)
-            user32.DrawTextW(hdc, "\U0001F514", -1, ctypes.byref(bell_rect), 0x0001 | 0x0004)
-            gdi32.SelectObject(hdc, old_bf)
-            gdi32.DeleteObject(bell_font)
-
             gdi32.SetTextColor(hdc, LIGHT_BGR)
             title_font = gdi32.CreateFontW(-14, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
             old_tf = gdi32.SelectObject(hdc, title_font)
-            title_rect = _RECT(PAD, card_y + 64, w - PAD, card_y + 84)
-            user32.DrawTextW(hdc, "暂无最近事件", -1, ctypes.byref(title_rect), 0x0001 | 0x0004)
+            title_rect = _RECT(PAD, card_y + 16, w - PAD, card_y + 36)
+            user32.DrawTextW(hdc, "暂无事件", -1, ctypes.byref(title_rect), 0x0001 | 0x0004)
             gdi32.SelectObject(hdc, old_tf)
             gdi32.DeleteObject(title_font)
-
-            gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-            sub_font = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-            old_sf = gdi32.SelectObject(hdc, sub_font)
-            sub_rect = _RECT(PAD, card_y + 88, w - PAD, card_y + 108)
-            user32.DrawTextW(hdc, "AgentBell 正在后台运行。", -1, ctypes.byref(sub_rect), 0x0001 | 0x0004)
-            gdi32.SelectObject(hdc, old_sf)
-            gdi32.DeleteObject(sub_font)
-            sub_font2 = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
-            old_sf2 = gdi32.SelectObject(hdc, sub_font2)
-            sub_rect2 = _RECT(PAD, card_y + 106, w - PAD, card_y + 126)
-            user32.DrawTextW(hdc, "Claude Code 需要你注意时会在这里显示。", -1, ctypes.byref(sub_rect2), 0x0001 | 0x0004)
-            gdi32.SelectObject(hdc, old_sf2)
-            gdi32.DeleteObject(sub_font2)
         else:
-            for idx, s in enumerate(recent):
-                if card_y + card_h > h - 50:
+            for idx, s in enumerate(visible_events):
+                if card_y + card_h > h - 60:
                     break
 
                 is_hovered = (idx == self._hover_card_idx)
 
-                # Card background (light theme with hover effect)
+                # Card background
                 if is_hovered:
                     self._draw_rounded_rect(hdc, PAD, card_y, card_w, card_h, RADIUS_CARD,
                                             BG_CARD_LIGHT_HOVER_BGR, ORANGE_HOVER_BGR)
@@ -392,14 +399,14 @@ class RecentEventsWindow:
                 lr = _RECT(dot_x + 14, card_y + 12, card_w - 80, card_y + 26)
                 user32.DrawTextW(hdc, state_label, -1, ctypes.byref(lr), DT_LEFT | DT_VCENTER)
 
-                ts = time.strftime("%H:%M:%S", time.localtime(s.get("timestamp", 0)))
+                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(s.get("timestamp", 0)))
                 gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-                ts_rect = _RECT(card_w - 70, card_y + 12, card_w - 10, card_y + 26)
+                ts_rect = _RECT(card_w - 140, card_y + 12, card_w - 10, card_y + 26)
                 user32.DrawTextW(hdc, ts, -1, ctypes.byref(ts_rect), DT_RIGHT | DT_VCENTER)
                 gdi32.SelectObject(hdc, old_f)
                 gdi32.DeleteObject(label_font)
 
-                # Line 2: Project name (bold) · Event type
+                # Line 2: Project name
                 gdi32.SetTextColor(hdc, 0x00404040)
                 info_font = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
                 old_f = gdi32.SelectObject(hdc, info_font)
@@ -430,7 +437,7 @@ class RecentEventsWindow:
                 self._card_rects.append((card_y, card_y + card_h, s.get("session_id", "")))
                 card_y += card_h + card_gap
 
-        # ── Footer ────────────────────────────────────────────────────────────
+        # Footer
         footer_y = h - 44
 
         sep_brush2 = gdi32.CreateSolidBrush(SEPARATOR_BGR)
@@ -443,15 +450,25 @@ class RecentEventsWindow:
         btn_font = gdi32.CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 'Segoe UI')
 
         old_bf = gdi32.SelectObject(hdc, btn_font)
-        gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-        view_all_rect = _RECT(PAD, footer_y, PAD + 80, footer_y + btn_h)
-        user32.DrawTextW(hdc, "查看全部", -1, ctypes.byref(view_all_rect), DT_LEFT | DT_VCENTER)
-        self._view_all_rect = [PAD, footer_y, PAD + 80, footer_y + btn_h]
 
+        # Back button
         gdi32.SetTextColor(hdc, MID_GRAY_BGR)
-        settings_rect = _RECT(w - PAD - 50, footer_y, w - PAD, footer_y + btn_h)
-        user32.DrawTextW(hdc, "设置", -1, ctypes.byref(settings_rect), DT_RIGHT | DT_VCENTER)
-        self._settings_rect = [w - PAD - 50, footer_y, w - PAD, footer_y + btn_h]
+        back_rect = _RECT(PAD, footer_y, PAD + 60, footer_y + btn_h)
+        user32.DrawTextW(hdc, "← 返回", -1, ctypes.byref(back_rect), DT_LEFT | DT_VCENTER)
+        self._back_rect = [PAD, footer_y, PAD + 60, footer_y + btn_h]
+
+        # Clear button
+        gdi32.SetTextColor(hdc, RED_BGR)
+        clear_rect = _RECT(w - PAD - 60, footer_y, w - PAD, footer_y + btn_h)
+        user32.DrawTextW(hdc, "清空", -1, ctypes.byref(clear_rect), DT_RIGHT | DT_VCENTER)
+        self._clear_rect = [w - PAD - 60, footer_y, w - PAD, footer_y + btn_h]
+
+        # Scroll indicator
+        if events:
+            scroll_text = f"{start_idx + 1}-{min(start_idx + 5, count)} / {count}"
+            gdi32.SetTextColor(hdc, MID_GRAY_BGR)
+            scroll_rect = _RECT(w // 2 - 40, footer_y, w // 2 + 40, footer_y + btn_h)
+            user32.DrawTextW(hdc, scroll_text, -1, ctypes.byref(scroll_rect), DT_VCENTER | 0x0001)
 
         gdi32.SelectObject(hdc, old_bf)
         gdi32.DeleteObject(btn_font)

@@ -17,6 +17,7 @@ from agentbell.logging_utils import setup_logging
 from agentbell.ui.icons import create_default_icon, create_badge_icon, create_muted_icon
 from agentbell.ui.tray_menu import TrayMenu, ID_RECENT, ID_MUTE, ID_QUIT, ID_SETTINGS, ID_ABOUT, ID_RESTART
 from agentbell.ui.recent_events_window import RecentEventsWindow
+from agentbell.ui.all_events_window import AllEventsWindow
 from agentbell.ui.settings_window import SettingsWindow, AboutWindow
 
 logger = setup_logging()
@@ -82,7 +83,9 @@ class TrayIcon:
         # Custom UI components
         self.settings_window = SettingsWindow()
         self.about_window = AboutWindow()
+        self.all_events = AllEventsWindow(daemon.event_store)
         self.recent_events = RecentEventsWindow(daemon, settings_window=self.settings_window)
+        self.recent_events.set_all_events_window(self.all_events)
         self.menu = TrayMenu(daemon, on_action=self._on_menu_action)
 
     def _create_window(self):
