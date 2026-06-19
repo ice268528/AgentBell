@@ -482,12 +482,20 @@ os.makedirs(_TOAST_DIR, exist_ok=True)
 
 
 def _cleanup_old_toasts():
+    """Clean up old toast marker files.
+
+    Removes files older than 30 seconds. This handles cases where
+    toast subprocess crashed or was killed before cleanup.
+    """
     now = time.time()
     for f in os.listdir(_TOAST_DIR):
+        if not f.endswith(".toast"):
+            continue
         path = os.path.join(_TOAST_DIR, f)
         try:
             if now - os.path.getmtime(path) > 30:
                 os.unlink(path)
+                logger.debug("Cleaned up old toast marker: %s", f)
         except OSError:
             pass
 
@@ -527,10 +535,13 @@ def _register_toast(toast_id: str) -> str:
 
 
 def _unregister_toast(marker_path: str) -> None:
+    """Remove toast marker file."""
     try:
-        os.unlink(marker_path)
-    except OSError:
-        pass
+        if os.path.exists(marker_path):
+            os.unlink(marker_path)
+            logger.debug("Unregistered toast marker: %s", os.path.basename(marker_path))
+    except OSError as e:
+        logger.warning("Failed to unregister toast marker %s: %s", marker_path, e)
 
 
 def _build_toast_params(
@@ -629,17 +640,19 @@ def show_toast(
     _log_event(event)
 
     _cleanup_old_toasts()
+    # Check for duplicate toasts (same type within dedup window)
+    dedup_cutoff = time.time() - cfg.dedupe_window_ms / 1000
     for f in os.listdir(_TOAST_DIR):
-        if f.endswith(".toast"):
-            marker = os.path.join(_TOAST_DIR, f)
-            try:
-                mtime = os.path.getmtime(marker)
-                if time.time() - mtime < cfg.dedupe_window_ms / 1000:
-                    if event.type in f:
-                        logger.info("Dedup: skipping %s", event.type)
-                        return
-            except OSError:
-                pass
+        if not f.endswith(".toast"):
+            continue
+        marker = os.path.join(_TOAST_DIR, f)
+        try:
+            mtime = os.path.getmtime(marker)
+            if mtime > dedup_cutoff and event.type in f:
+                logger.info("Dedup: skipping %s (within %.1fs window)", event.type, cfg.dedupe_window_ms / 1000)
+                return
+        except OSError:
+            pass
 
     active = _get_active_toast_count()
     if active >= cfg.max_visible_toasts:
