@@ -100,36 +100,14 @@ def resolve_session_label(payload: dict, session_id: str) -> str:
 
 # ── Event Router ─────────────────────────────────────────────────────────────
 class EventRouter:
-    """Routes events, dedup, decide toast display."""
+    """Routes events, decide toast display."""
 
     def __init__(self, registry: SessionRegistry):
         self.registry = registry
-        self._recent_events: dict[str, float] = {}
-        self._lock = threading.RLock()
         self._toast_callback = None  # set by daemon
 
     def set_toast_callback(self, callback):
         self._toast_callback = callback
-
-    def _dedup_key(self, session_id: str, event_type: str, extra: str = "") -> str:
-        return f"{session_id}:{event_type}:{extra}"
-
-    def _is_duplicate(self, key: str, window_sec: float = 5.0) -> bool:
-        now = time.time()
-        with self._lock:
-            last = self._recent_events.get(key, 0)
-            if now - last < window_sec:
-                return True
-            self._recent_events[key] = now
-            return False
-
-    def _cleanup_old_events(self):
-        now = time.time()
-        with self._lock:
-            self._recent_events = {
-                k: v for k, v in self._recent_events.items()
-                if now - v < 30
-            }
 
     def route(self, event_name: str, payload: dict) -> dict:
         """Route an event. Returns {action, toast_type, suppressed_reason}."""
@@ -154,10 +132,6 @@ class EventRouter:
 
         # ── PermissionRequest ──
         if event_name == "PermissionRequest":
-            dedup_key = self._dedup_key(session_id, "permission", tool_use_id)
-            if self._is_duplicate(dedup_key):
-                result["suppressed_reason"] = "duplicate_event"
-                return result
             self.registry.update(session_id, state="waiting_permission", pending_permission=True)
             result["action"] = "toast"
             result["toast_type"] = "permission_required"
@@ -166,19 +140,11 @@ class EventRouter:
         # ── Notification ──
         if event_name == "Notification":
             if notification_type == "permission_prompt":
-                dedup_key = self._dedup_key(session_id, "permission", tool_use_id)
-                if self._is_duplicate(dedup_key):
-                    result["suppressed_reason"] = "duplicate_event"
-                    return result
                 self.registry.update(session_id, state="waiting_permission", pending_permission=True)
                 result["action"] = "toast"
                 result["toast_type"] = "permission_required"
                 return result
             elif notification_type == "idle_prompt":
-                dedup_key = self._dedup_key(session_id, "idle")
-                if self._is_duplicate(dedup_key):
-                    result["suppressed_reason"] = "duplicate_event"
-                    return result
                 self.registry.update(session_id, state="waiting_input", pending_permission=False)
                 result["action"] = "toast"
                 result["toast_type"] = "waiting_input"
@@ -195,7 +161,8 @@ class EventRouter:
                 result["suppressed_reason"] = "stop_has_background_tasks"
             else:
                 self.registry.update(session_id, state="waiting_input", pending_permission=False)
-                result["suppressed_reason"] = "stop_is_not_task_done"
+                result["action"] = "toast"
+                result["toast_type"] = "waiting_input"
             return result
 
         # ── TaskCompleted ──
@@ -203,10 +170,6 @@ class EventRouter:
             task_subject = payload.get("task_subject", "")
             if not task_subject:
                 result["suppressed_reason"] = "no_task_subject"
-                return result
-            dedup_key = self._dedup_key(session_id, "task_completed", task_id)
-            if self._is_duplicate(dedup_key):
-                result["suppressed_reason"] = "duplicate_event"
                 return result
             self.registry.update(session_id, state="task_completed", pending_permission=False)
             result["action"] = "toast"

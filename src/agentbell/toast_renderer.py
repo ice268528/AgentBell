@@ -640,19 +640,6 @@ def show_toast(
     _log_event(event)
 
     _cleanup_old_toasts()
-    # Check for duplicate toasts (same type within dedup window)
-    dedup_cutoff = time.time() - cfg.dedupe_window_ms / 1000
-    for f in os.listdir(_TOAST_DIR):
-        if not f.endswith(".toast"):
-            continue
-        marker = os.path.join(_TOAST_DIR, f)
-        try:
-            mtime = os.path.getmtime(marker)
-            if mtime > dedup_cutoff and event.type in f:
-                logger.info("Dedup: skipping %s (within %.1fs window)", event.type, cfg.dedupe_window_ms / 1000)
-                return
-        except OSError:
-            pass
 
     active = _get_active_toast_count()
     if active >= cfg.max_visible_toasts:
