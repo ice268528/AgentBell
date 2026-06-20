@@ -243,6 +243,16 @@ class TrayIcon:
         self._create_window()
         self._add_tray_icon()
 
+        # Start toast daemon in background
+        try:
+            from agentbell.toast_pipe_client import ensure_daemon
+            if ensure_daemon():
+                logger.info("Toast daemon started")
+            else:
+                logger.warning("Failed to start toast daemon")
+        except Exception as e:
+            logger.warning("Failed to start toast daemon: %s", e)
+
         # Start daemon in background thread
         daemon_thread = threading.Thread(target=self.daemon.start, daemon=True)
         daemon_thread.start()
